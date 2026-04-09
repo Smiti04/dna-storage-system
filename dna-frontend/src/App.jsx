@@ -1,13 +1,13 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import Login from "./pages/login";
-import Register from "./pages/Register";
-import ForgotPassword from "./pages/ForgotPassword";
-import Dashboard from "./pages/Dashboard";
-import Upload from "./pages/Upload";
+import Register from "./pages/register";
+import ForgotPassword from "./pages/forgotpassword";
+import Dashboard from "./pages/dashboard";
+import Upload from "./pages/upload";
 import Retrieve from "./pages/retrieve";
 import ViewFiles from "./pages/viewfiles";
-import SequenceViewer from "./pages/sequenceviewer"; // ← added
+import SequenceViewer from "./pages/sequenceviewer";
 
 function App() {
   return (
@@ -20,7 +20,7 @@ function App() {
         <Route path="/upload" element={<Upload />} />
         <Route path="/retrieve" element={<Retrieve />} />
         <Route path="/files" element={<ViewFiles />} />
-        <Route path="/sequence" element={<SequenceViewer />} /> {/* ← added */}
+        <Route path="/sequence" element={<SequenceViewer />} />
       </Routes>
     </BrowserRouter>
   );
