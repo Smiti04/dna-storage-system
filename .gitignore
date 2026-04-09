@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.db
+blockchain_chain.json
+fragments_storage/
+output_files/
+key_files/
+token_files/
+temp_uploads/
+venv/
+.env
+
+# Node
+node_modules/
+dist/
+.env.local
