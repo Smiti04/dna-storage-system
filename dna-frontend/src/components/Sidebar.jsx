@@ -19,22 +19,22 @@ function Sidebar() {
 
   return (
     <aside style={{
-      width: "220px", minHeight: "100vh", background: "#060d1a",
-      borderRight: "1px solid #1e293b", display: "flex",
+      width: "240px", minHeight: "100vh", background: "#ffffff",
+      borderRight: "1px solid #e2e8f0", display: "flex",
       flexDirection: "column", padding: "0", flexShrink: 0,
     }}>
       {/* Logo */}
-      <div style={{ padding: "28px 20px 24px", borderBottom: "1px solid #1e293b" }}>
-        <div style={{ fontFamily: "var(--font-display)", fontSize: "13px", color: "var(--neon-green)", letterSpacing: "3px" }}>
-          DNA//STORE
+      <div style={{ padding: "24px 20px 20px", borderBottom: "1px solid #e2e8f0" }}>
+        <div style={{ fontFamily: "var(--font-display)", fontSize: "18px", fontWeight: "700", color: "#0f172a", letterSpacing: "-0.3px" }}>
+          DNA Store
         </div>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>
-          BIO-DIGITAL STORAGE
+        <div style={{ fontSize: "12px", color: "#94a3b8", marginTop: "2px", fontWeight: "400" }}>
+          Bio-Digital Storage
         </div>
       </div>
 
       {/* Nav */}
-      <nav style={{ flex: 1, padding: "16px 12px" }}>
+      <nav style={{ flex: 1, padding: "12px 10px" }}>
         {links.map((l) => {
           const active = location.pathname === l.path;
           return (
@@ -42,36 +42,38 @@ function Sidebar() {
               key={l.path}
               onClick={() => navigate(l.path)}
               style={{
-                display: "flex", alignItems: "center", gap: "12px",
-                width: "100%", padding: "11px 14px", marginBottom: "4px",
-                background: active ? "rgba(0,255,136,0.08)" : "transparent",
-                border: active ? "1px solid rgba(0,255,136,0.3)" : "1px solid transparent",
-                borderRadius: "6px", color: active ? "var(--neon-green)" : "var(--text-secondary)",
-                fontFamily: "var(--font-mono)", fontSize: "12px", letterSpacing: "1px",
-                cursor: "pointer", textAlign: "left", transition: "all 0.2s",
+                display: "flex", alignItems: "center", gap: "10px",
+                width: "100%", padding: "10px 14px", marginBottom: "2px",
+                background: active ? "#eff6ff" : "transparent",
+                border: "none",
+                borderRadius: "8px", color: active ? "#2563eb" : "#475569",
+                fontFamily: "var(--font-body)", fontSize: "14px", fontWeight: active ? "600" : "400",
+                cursor: "pointer", textAlign: "left", transition: "all 0.15s",
               }}
+              onMouseOver={e => { if (!active) { e.currentTarget.style.background = "#f8fafc"; } }}
+              onMouseOut={e => { if (!active) { e.currentTarget.style.background = "transparent"; } }}
             >
-              <span style={{ fontSize: "16px" }}>{l.icon}</span>
-              {l.label.toUpperCase()}
+              <span style={{ fontSize: "15px", opacity: 0.7 }}>{l.icon}</span>
+              {l.label}
             </button>
           );
         })}
       </nav>
 
       {/* Logout */}
-      <div style={{ padding: "16px 12px", borderTop: "1px solid #1e293b" }}>
+      <div style={{ padding: "12px 10px", borderTop: "1px solid #e2e8f0" }}>
         <button
           onClick={handleLogout}
           style={{
             width: "100%", padding: "10px", background: "transparent",
-            border: "1px solid #334155", borderRadius: "6px",
-            color: "#64748b", fontFamily: "var(--font-mono)", fontSize: "11px",
-            letterSpacing: "1px", cursor: "pointer", transition: "all 0.2s",
+            border: "1px solid #e2e8f0", borderRadius: "8px",
+            color: "#94a3b8", fontFamily: "var(--font-body)", fontSize: "13px",
+            fontWeight: "500", cursor: "pointer", transition: "all 0.15s",
           }}
           onMouseOver={e => { e.target.style.borderColor = "#ef4444"; e.target.style.color = "#ef4444"; }}
-          onMouseOut={e => { e.target.style.borderColor = "#334155"; e.target.style.color = "#64748b"; }}
+          onMouseOut={e => { e.target.style.borderColor = "#e2e8f0"; e.target.style.color = "#94a3b8"; }}
         >
-          ⏻ LOGOUT
+          Log out
         </button>
       </div>
     </aside>
