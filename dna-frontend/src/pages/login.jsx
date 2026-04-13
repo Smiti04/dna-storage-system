@@ -30,17 +30,17 @@ function Login() {
     else setError("Unexpected response from server");
   };
 
-  const label = { display: "block", fontSize: "13px", fontWeight: "500", color: "#5a5078", marginBottom: "6px" };
+  const label = { display: "block", fontSize: "14px", fontWeight: "600", color: "#c4b5fd", marginBottom: "6px" };
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0912", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ width: "100%", maxWidth: "400px", padding: "0 20px" }}>
         <div style={{ textAlign: "center", marginBottom: "36px" }}>
-          <div style={{ fontSize: "22px", fontWeight: "600", letterSpacing: "2px" }}><span style={{ color: "#a29bfe" }}>DNA</span> <span style={{ color: "#5a5078" }}>VAULT</span></div>
-          <div style={{ fontSize: "13px", color: "#3a3458", marginTop: "6px" }}>Sign in to your account</div>
+          <div style={{ fontSize: "24px", fontWeight: "700", letterSpacing: "2px", fontFamily: "var(--font-display)" }}><span style={{ color: "#a29bfe" }}>DNA</span> <span style={{ color: "#9a8fc0" }}>VAULT</span></div>
+          <div style={{ fontSize: "14px", color: "#9a8fc0", marginTop: "6px", fontWeight: "500" }}>Sign in to your account</div>
         </div>
 
-        <div style={{ background: "#12101e", border: "1px solid #1e1a2e", borderRadius: "10px", padding: "28px" }}>
+        <div style={{ background: "#12101e", border: "1px solid #2a2440", borderRadius: "10px", padding: "28px" }}>
           <div style={{ marginBottom: "16px" }}>
             <label style={label}>Username or Email</label>
             <input className="input-field" type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter username or email" onKeyDown={e => e.key === "Enter" && handleLogin()} />
@@ -49,14 +49,14 @@ function Login() {
             <label style={label}>Password</label>
             <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
               <input className="input-field" type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" style={{ paddingRight: "40px" }} onKeyDown={e => e.key === "Enter" && handleLogin()} />
-              <button onClick={() => setShowPassword(!showPassword)} style={{ position: "absolute", right: "12px", background: "transparent", border: "none", color: "#3a3458", cursor: "pointer", padding: "0" }}><EyeIcon show={showPassword} /></button>
+              <button onClick={() => setShowPassword(!showPassword)} style={{ position: "absolute", right: "12px", background: "transparent", border: "none", color: "#6b5f8a", cursor: "pointer", padding: "0" }}><EyeIcon show={showPassword} /></button>
             </div>
           </div>
-          {error && <div style={{ fontSize: "13px", color: "#ef4444", marginBottom: "16px", padding: "10px 14px", background: "#1a0a0a", borderRadius: "6px", border: "1px solid rgba(239,68,68,0.2)" }}>{error}</div>}
+          {error && <div style={{ fontSize: "13px", fontWeight: "600", color: "#ef4444", marginBottom: "16px", padding: "10px 14px", background: "#1a0a0a", borderRadius: "6px", border: "1px solid rgba(239,68,68,0.3)" }}>{error}</div>}
           <button className="btn-primary" style={{ width: "100%" }} onClick={handleLogin} disabled={loading}>{loading ? "Signing in..." : "Sign in"}</button>
-          <div style={{ marginTop: "20px", display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+          <div style={{ marginTop: "20px", display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: "600" }}>
             <Link to="/register" style={{ color: "#48dbfb", textDecoration: "none" }}>Create account</Link>
-            <Link to="/forgot" style={{ color: "#5a5078", textDecoration: "none" }}>Forgot password?</Link>
+            <Link to="/forgot" style={{ color: "#9a8fc0", textDecoration: "none" }}>Forgot password?</Link>
           </div>
         </div>
       </div>
