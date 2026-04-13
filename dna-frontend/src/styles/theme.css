@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500&display=swap');
 
 :root {
   --bg-primary: #0a0912;
@@ -30,7 +30,7 @@
   --border: #1e1a2e;
   --border-hover: #2e2840;
 
-  --font-display: 'Syne', sans-serif;
+  --font-display: 'Unbounded', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --font-body: 'Outfit', sans-serif;
 
@@ -108,7 +108,7 @@ body {
 
 .page-title {
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 4px;
