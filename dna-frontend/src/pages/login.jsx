@@ -20,7 +20,7 @@ function Login() {
 
   const handleLogin = async () => {
     setError("");
-    if (!username.trim()) { setError("Username is required"); return; }
+    if (!username.trim()) { setError("Username or email is required"); return; }
     if (!password) { setError("Password is required"); return; }
     setLoading(true);
     const res = await loginUser(username, password);
@@ -42,8 +42,8 @@ function Login() {
 
         <div style={{ background: "#12101e", border: "1px solid #1e1a2e", borderRadius: "10px", padding: "28px" }}>
           <div style={{ marginBottom: "16px" }}>
-            <label style={label}>Username</label>
-            <input className="input-field" type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter your username" onKeyDown={e => e.key === "Enter" && handleLogin()} />
+            <label style={label}>Username or Email</label>
+            <input className="input-field" type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter username or email" onKeyDown={e => e.key === "Enter" && handleLogin()} />
           </div>
           <div style={{ marginBottom: "20px" }}>
             <label style={label}>Password</label>
