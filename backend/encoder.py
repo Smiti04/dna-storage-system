@@ -89,29 +89,18 @@ def decode_rs(fragment):
     except:
         return None
  
-def sequential_rs_encode(fragments):
-    """Sequential RS encoding — works reliably on all platforms including Render."""
-    results = []
-    for i, frag in enumerate(fragments):
-        results.append(encode_rs(frag))
-        if (i + 1) % 100 == 0:
-            print(f"  RS encoding: {i+1}/{len(fragments)}")
-    return results
- 
 # =========================
 # XOR REDUNDANCY
 # =========================
 def create_xor_fragment(fragments):
     if len(fragments) < 2:
         return None
-    xor_bytes = bytes.fromhex(fragments[0])
-    for frag in fragments[1:]:
+    max_len = max(len(bytes.fromhex(f)) for f in fragments)
+    xor_bytes = bytearray(max_len)
+    for frag in fragments:
         b = bytes.fromhex(frag)
-        if len(b) < len(xor_bytes):
-            b += bytes(len(xor_bytes) - len(b))
-        elif len(b) > len(xor_bytes):
-            xor_bytes += bytes(len(b) - len(xor_bytes))
-        xor_bytes = bytes(a ^ b for a, b in zip(xor_bytes, b))
+        for i in range(len(b)):
+            xor_bytes[i] ^= b[i]
     return xor_bytes.hex()
  
 # =========================
@@ -125,62 +114,51 @@ def encode_file(file_path, encoding_type="4base"):
     index = 0
     hasher = hashlib.sha256()
  
-    # Track how many data fragments per chunk (exclude XOR)
-    chunk_frag_counts = {}
- 
     with open(file_path, "rb") as f:
-        chunk_id = 0
-        while True:
-            chunk = f.read(1024 * 1024)
-            if not chunk:
-                break
+        raw_data = f.read()
  
-            hasher.update(chunk)
- 
-            # STEP 1: Compression
-            compressed = zlib.compress(chunk, 9)
- 
-            # STEP 2: Binary → Hex
-            hex_data = compressed.hex()
- 
-            # STEP 3: Fragmentation
-            fragment_size = 200
-            fragments = [
-                hex_data[i:i+fragment_size]
-                for i in range(0, len(hex_data), fragment_size)
-            ]
- 
-            data_frag_count = len(fragments)
-            chunk_frag_counts[chunk_id] = data_frag_count
- 
-            # STEP 4: XOR redundancy
-            xor_fragment = create_xor_fragment(fragments)
-            if xor_fragment:
-                fragments.append(xor_fragment)
- 
-            # STEP 5: Reed-Solomon (sequential — no multiprocessing)
-            print(f"  Chunk {chunk_id}: {len(fragments)} fragments")
-            fragments = sequential_rs_encode(fragments)
- 
-            # STEP 6: DNA Encoding
-            for frag in fragments:
-                if encoding_type == "6base":
-                    dna, pad = hex_to_dna_6(frag)
-                    meta = f"{chunk_id}:{str(index).zfill(8)}:{pad}"
-                else:
-                    dna = hex_to_dna_encode_4(frag)
-                    meta = f"{chunk_id}:{str(index).zfill(8)}"
- 
-                dna = apply_dna_constraints(dna, encoding_type)
-                dna = FORWARD_PRIMER + dna + REVERSE_PRIMER
- 
-                dna_fragments.append(f"{meta}|{dna}")
-                index += 1
- 
-            chunk_id += 1
- 
+    hasher.update(raw_data)
     file_hash = hasher.hexdigest()
-    print(f"[7/7] Encoding complete — {len(dna_fragments)} total fragments")
+ 
+    # STEP 1: Compress entire file (level 6 — fast, good ratio)
+    print("[2/7] Compressing...")
+    compressed = zlib.compress(raw_data, 6)
+    print(f"  {len(raw_data)} -> {len(compressed)} bytes")
+ 
+    # STEP 2: Hex
+    hex_data = compressed.hex()
+ 
+    # STEP 3: Fragment (larger fragments = fewer total = faster)
+    fragment_size = 500
+    fragments = [hex_data[i:i+fragment_size] for i in range(0, len(hex_data), fragment_size)]
+    print(f"[3/7] {len(fragments)} fragments")
+ 
+    # STEP 4: XOR redundancy
+    xor_fragment = create_xor_fragment(fragments)
+    if xor_fragment:
+        fragments.append(xor_fragment)
+ 
+    # STEP 5: Reed-Solomon
+    print(f"[4/7] Reed-Solomon encoding...")
+    fragments = [encode_rs(f) for f in fragments]
+ 
+    # STEP 6: DNA Encoding
+    print(f"[5/7] DNA encoding...")
+    chunk_id = 0
+    for frag in fragments:
+        if encoding_type == "6base":
+            dna, pad = hex_to_dna_6(frag)
+            meta = f"{chunk_id}:{str(index).zfill(8)}:{pad}"
+        else:
+            dna = hex_to_dna_encode_4(frag)
+            meta = f"{chunk_id}:{str(index).zfill(8)}"
+ 
+        dna = apply_dna_constraints(dna, encoding_type)
+        dna = FORWARD_PRIMER + dna + REVERSE_PRIMER
+        dna_fragments.append(f"{meta}|{dna}")
+        index += 1
+ 
+    print(f"[7/7] Done — {len(dna_fragments)} fragments")
     return dna_fragments, file_hash, filename
  
  
@@ -188,19 +166,17 @@ def encode_file(file_path, encoding_type="4base"):
 # FILE DECODING
 # =========================
 def decode_fragments(fragments, filename, encoding_type="4base"):
-    print(f"\n[1/6] Decoding started ({encoding_type})")
+    print(f"\n[1/6] Decoding ({encoding_type})")
  
     parsed = []
- 
     for f in fragments:
         try:
             pipe_idx = f.index('|')
             meta = f[:pipe_idx]
             dna = f[pipe_idx+1:]
- 
             parts = meta.split(':')
             chunk_id = int(parts[0])
-            index = int(parts[1])
+            idx = int(parts[1])
             pad = int(parts[2]) if len(parts) > 2 else 0
  
             if dna.startswith(FORWARD_PRIMER):
@@ -208,49 +184,42 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
             if dna.endswith(REVERSE_PRIMER):
                 dna = dna[:-len(REVERSE_PRIMER)]
  
-            parsed.append((chunk_id, index, dna, pad))
+            parsed.append((chunk_id, idx, dna, pad))
         except:
             continue
  
-    # Global sort
     parsed.sort(key=lambda x: (x[0], x[1]))
  
-    # Group by chunk_id
+    # Group by chunk
     chunks = {}
-    for chunk_id, index, dna, pad in parsed:
+    for chunk_id, idx, dna, pad in parsed:
         if chunk_id not in chunks:
             chunks[chunk_id] = []
-        chunks[chunk_id].append((index, dna, pad))
+        chunks[chunk_id].append((idx, dna, pad))
  
     full_hex = ""
- 
     for chunk_id in sorted(chunks.keys()):
         chunk_frags = chunks[chunk_id]
         chunk_frags.sort(key=lambda x: x[0])
  
-        # The last fragment is XOR redundancy — skip it during normal decoding
-        # Only use data fragments (all except the last one if there are 2+ fragments)
+        # Skip last fragment (XOR redundancy)
         if len(chunk_frags) > 1:
-            data_frags = chunk_frags[:-1]  # skip XOR fragment
+            data_frags = chunk_frags[:-1]
         else:
             data_frags = chunk_frags
  
-        chunk_hex = ""
-        for index, dna, pad in data_frags:
+        for idx, dna, pad in data_frags:
             try:
                 if encoding_type == "6base":
                     hex_frag = dna_to_hex_6(dna, pad)
                 else:
                     hex_frag = dna_to_hex_decode_4(dna)
- 
                 rs_decoded = decode_rs(hex_frag)
                 if rs_decoded:
-                    chunk_hex += rs_decoded
+                    full_hex += rs_decoded
             except Exception as e:
-                print(f"  Warning: Failed to decode fragment {chunk_id}:{index} — {e}")
+                print(f"  Warning: fragment {chunk_id}:{idx} failed — {e}")
                 continue
- 
-        full_hex += chunk_hex
  
     if len(full_hex) % 2 != 0:
         full_hex = full_hex[:-1]
@@ -259,9 +228,9 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
  
     try:
         final_data = zlib.decompress(full_binary)
-        print("✅ Decompression successful")
+        print("OK Decompression successful")
     except Exception as e:
-        print(f"❌ Decompression failed: {e}")
+        print(f"ERR Decompression failed: {e}")
         final_data = full_binary
  
     os.makedirs("output_files", exist_ok=True)
@@ -269,7 +238,7 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
     with open(path, "wb") as f:
         f.write(final_data)
  
-    print(f"✅ File reconstructed: {path} ({len(final_data)} bytes)")
+    print(f"OK Reconstructed: {path} ({len(final_data)} bytes)")
     return path
  
  
@@ -289,3 +258,4 @@ def compute_merkle_root(fragments):
             new_hashes.append(hashlib.sha256(combined.encode()).hexdigest())
         hashes = new_hashes
     return hashes[0]
+ 
