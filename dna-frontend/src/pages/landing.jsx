@@ -1,10 +1,167 @@
 import { useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
+
+function DNAHelix() {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const W = 220, H = 320;
+    canvas.width = W * 2; canvas.height = H * 2;
+    canvas.style.width = W + "px"; canvas.style.height = H + "px";
+    ctx.scale(2, 2);
+
+    const bases = ["A", "T", "G", "C", "5mC", "6mA"];
+    const colors = ["#a29bfe", "#48dbfb", "#f0932b", "#a29bfe", "#c4b5fd", "#48dbfb"];
+    const numRungs = 12;
+    const rungSpacing = 24;
+    const cx = W / 2;
+    const radiusX = 50;
+    let offset = 0;
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      const rungs = [];
+      for (let i = 0; i < numRungs; i++) {
+        const y = 20 + i * rungSpacing;
+        const angle = (i * 0.55) + offset;
+        const x1 = cx + Math.sin(angle) * radiusX;
+        const x2 = cx - Math.sin(angle) * radiusX;
+        const depth = Math.cos(angle);
+        rungs.push({ i, y, x1, x2, depth, angle });
+      }
+
+      // Draw back strand first
+      ctx.beginPath();
+      ctx.strokeStyle = "#1e1a2e";
+      ctx.lineWidth = 1.5;
+      for (let r = 0; r < rungs.length; r++) {
+        const { y, x2, depth } = rungs[r];
+        if (depth < 0) {
+          if (r === 0) ctx.moveTo(x2, y);
+          else ctx.lineTo(x2, y);
+        }
+      }
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.strokeStyle = "#1e1a2e";
+      ctx.lineWidth = 1.5;
+      for (let r = 0; r < rungs.length; r++) {
+        const { y, x1, depth } = rungs[r];
+        if (depth < 0) {
+          if (r === 0) ctx.moveTo(x1, y);
+          else ctx.lineTo(x1, y);
+        }
+      }
+      ctx.stroke();
+
+      // Draw rungs and bases
+      for (const { i, y, x1, x2, depth } of rungs) {
+        const alpha = 0.3 + Math.abs(depth) * 0.7;
+        const bIdx = i % bases.length;
+        const bIdx2 = (i + 3) % bases.length;
+        const c1 = colors[bIdx];
+        const c2 = colors[bIdx2];
+
+        // Rung line
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(30,26,46,${alpha})`;
+        ctx.lineWidth = 1;
+        ctx.moveTo(x1, y);
+        ctx.lineTo(x2, y);
+        ctx.stroke();
+
+        // Hydrogen bonds (dashes in middle)
+        const mx = (x1 + x2) / 2;
+        for (let d = -6; d <= 6; d += 6) {
+          ctx.beginPath();
+          ctx.strokeStyle = `rgba(90,80,120,${alpha * 0.4})`;
+          ctx.lineWidth = 0.5;
+          ctx.moveTo(mx + d - 2, y);
+          ctx.lineTo(mx + d + 2, y);
+          ctx.stroke();
+        }
+
+        // Base circles
+        const r = 13;
+        // Left base
+        ctx.beginPath();
+        ctx.arc(x1, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(26,21,40,${alpha})`;
+        ctx.fill();
+        ctx.strokeStyle = c1 + Math.round(alpha * 60).toString(16).padStart(2, "0");
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = c1;
+        ctx.globalAlpha = alpha;
+        ctx.font = "500 10px 'Outfit', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(bases[bIdx], x1, y + 0.5);
+
+        // Right base
+        ctx.beginPath();
+        ctx.arc(x2, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(26,21,40,${alpha})`;
+        ctx.globalAlpha = 1;
+        ctx.fill();
+        ctx.strokeStyle = c2 + Math.round(alpha * 60).toString(16).padStart(2, "0");
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = c2;
+        ctx.globalAlpha = alpha;
+        ctx.font = "500 10px 'Outfit', sans-serif";
+        ctx.fillText(bases[bIdx2], x2, y + 0.5);
+        ctx.globalAlpha = 1;
+      }
+
+      // Front strands
+      // Left strand
+      ctx.beginPath();
+      ctx.lineWidth = 2;
+      let started = false;
+      for (let r = 0; r < rungs.length; r++) {
+        const { y, x1, depth } = rungs[r];
+        if (depth >= 0) {
+          if (!started) { ctx.moveTo(x1, y); started = true; }
+          else ctx.lineTo(x1, y);
+        }
+      }
+      ctx.strokeStyle = "#a29bfe55";
+      ctx.stroke();
+
+      // Right strand
+      ctx.beginPath();
+      started = false;
+      for (let r = 0; r < rungs.length; r++) {
+        const { y, x2, depth } = rungs[r];
+        if (depth >= 0) {
+          if (!started) { ctx.moveTo(x2, y); started = true; }
+          else ctx.lineTo(x2, y);
+        }
+      }
+      ctx.strokeStyle = "#48dbfb55";
+      ctx.stroke();
+
+      offset += 0.012;
+      requestAnimationFrame(draw);
+    }
+
+    const raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return <canvas ref={canvasRef} style={{ display: "block" }} />;
+}
 
 function Landing() {
   const navigate = useNavigate();
-  const [vis, setVis] = useState(false);
-  useEffect(() => setVis(true), []);
 
   const features = [
     { icon: "🧬", title: "DNA Encoding", desc: "Files compressed, fragmented, and encoded into synthetic DNA using 4-base or 6-base epigenetic encoding with +29% density.", color: "#a29bfe" },
@@ -43,7 +200,7 @@ function Landing() {
       </nav>
 
       {/* Hero */}
-      <section style={{ maxWidth: "1100px", margin: "0 auto", padding: "80px 40px 60px", display: "flex", alignItems: "center", gap: "50px" }}>
+      <section style={{ maxWidth: "1100px", margin: "0 auto", padding: "60px 40px 60px", display: "flex", alignItems: "center", gap: "40px" }}>
         <div style={{ flex: 1 }}>
           <div className="fu fu1" style={{ display: "inline-block", padding: "5px 14px", borderRadius: "20px", background: "#1a1528", border: "1px solid rgba(162,155,254,0.2)", fontSize: "11px", color: "#a29bfe", letterSpacing: "1px", marginBottom: "18px" }}>
             BIO-DIGITAL ARCHIVAL
@@ -64,16 +221,11 @@ function Landing() {
             ))}
           </div>
         </div>
-        {/* DNA visual */}
-        <div className="fu fu3" style={{ flex: "0 0 200px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-          <div style={{ width: "180px", height: "220px", borderRadius: "16px", background: "#12101e", border: "1px solid #1e1a2e", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-            {[["A", "#a29bfe", "T", "#48dbfb"], ["G", "#f0932b", "C", "#a29bfe"], ["A", "#48dbfb", "T", "#f0932b"], ["G", "#a29bfe", "C", "#48dbfb"]].map(([a, ac, b, bc], i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: "#1a1528", border: `1px solid ${ac}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", color: ac, fontWeight: "500" }}>{a}</div>
-                <div style={{ width: "30px", height: "1.5px", background: `linear-gradient(90deg, ${ac}55, ${bc}55)` }} />
-                <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: "#1a1528", border: `1px solid ${bc}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", color: bc, fontWeight: "500" }}>{b}</div>
-              </div>
-            ))}
+
+        {/* Animated DNA Helix */}
+        <div className="fu fu3" style={{ flex: "0 0 220px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div style={{ borderRadius: "16px", background: "#12101e", border: "1px solid #1e1a2e", padding: "0", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <DNAHelix />
           </div>
           <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: "10px", color: "#3a3458", marginTop: "12px", letterSpacing: "1px" }}>A · T · G · C · 5mC · 6mA</div>
         </div>
