@@ -27,7 +27,7 @@ hex_to_dna_map_4 = {
 dna_to_hex_map_4 = {v: k for k, v in hex_to_dna_map_4.items()}
 
 # =========================
-# 6-BASE MAP (epigenetic)
+# 6-BASE MAP
 # =========================
 BASE6 = ['A', 'T', 'G', 'C', 'M', 'X']
 
@@ -62,7 +62,7 @@ def dna_to_hex_6(dna, pad=0):
     return hex_string
 
 # =========================
-# 4-BASE HELPERS (OPTIMIZED — use join + list comp)
+# 4-BASE HELPERS
 # =========================
 def hex_to_dna_encode_4(hex_string):
     return "".join(hex_to_dna_map_4[h] for h in hex_string)
@@ -94,7 +94,7 @@ def decode_rs(fragment):
 def create_xor_fragment(fragments):
     if len(fragments) < 2:
         return None
-    max_len = max(len(bytes.fromhex(f)) for f in fragments)
+    max_len = max(len(f) // 2 for f in fragments)
     xor_bytes = bytearray(max_len)
     for frag in fragments:
         b = bytes.fromhex(frag)
@@ -102,76 +102,9 @@ def create_xor_fragment(fragments):
             xor_bytes[i] ^= b[i]
     return xor_bytes.hex()
 
-# =========================
-# FAST CONSTRAINT CHECK
-# =========================
-SCRAMBLE_SEEDS = [0x00, 0xAA, 0x55, 0xCC, 0x33, 0xF0, 0x0F, 0x69]
-
-def scramble_hex(hex_string, seed):
-    if seed == 0x00:
-        return hex_string
-    data = bytes.fromhex(hex_string)
-    return bytes(b ^ seed for b in data).hex()
-
-def unscramble_hex(hex_string, seed):
-    return scramble_hex(hex_string, seed)
-
-def _fast_check(dna):
-    """Ultra-fast combined GC + homopolymer check. No allocations."""
-    n = len(dna)
-    if n == 0:
-        return True
-    gc = 0
-    run = 1
-    prev = dna[0]
-    if prev in ('G', 'C'):
-        gc += 1
-    for i in range(1, n):
-        c = dna[i]
-        if c in ('G', 'C'):
-            gc += 1
-        if c == prev:
-            run += 1
-            if run > 3:
-                return False
-        else:
-            run = 1
-            prev = c
-    ratio = gc / n
-    return 0.35 <= ratio <= 0.65
-
-def encode_fragment_constrained(hex_frag, encoding_type="4base"):
-    """
-    Encode hex → DNA with constraint-aware retry.
-    Tries up to 8 XOR seeds. Returns (dna, seed_idx, pad).
-    """
-    best_dna = None
-    best_seed = 0
-    best_pad = 0
-
-    for seed_idx, seed in enumerate(SCRAMBLE_SEEDS):
-        scrambled = scramble_hex(hex_frag, seed)
-        if encoding_type == "6base":
-            dna, pad = hex_to_dna_6(scrambled)
-        else:
-            dna = hex_to_dna_encode_4(scrambled)
-            pad = 0
-
-        dna = apply_dna_constraints(dna, encoding_type)
-
-        if _fast_check(dna):
-            return dna, seed_idx, pad
-
-        if best_dna is None:
-            best_dna = dna
-            best_seed = seed_idx
-            best_pad = pad
-
-    return best_dna, best_seed, best_pad
-
 
 # =========================
-# FILE ENCODING (OPTIMIZED)
+# FILE ENCODING (SPEED OPTIMIZED)
 # =========================
 def encode_file(file_path, encoding_type="4base"):
     print(f"\n[ENC] Starting {encoding_type} encoding...")
@@ -184,50 +117,54 @@ def encode_file(file_path, encoding_type="4base"):
 
     hasher.update(raw_data)
     file_hash = hasher.hexdigest()
+    raw_size = len(raw_data)
 
-    # Compress — level 1 for speed on large files, level 6 for small
-    level = 1 if len(raw_data) > 500_000 else 6
-    compressed = zlib.compress(raw_data, level)
-    print(f"[ENC] {len(raw_data)} -> {len(compressed)} bytes (level {level})")
+    # Compress — level 1 for speed
+    compressed = zlib.compress(raw_data, 1)
+    print(f"[ENC] {raw_size} -> {len(compressed)} bytes")
 
     hex_data = compressed.hex()
 
-    # Larger fragments = fewer RS calls = much faster
-    # 1000 hex chars per fragment (was 500)
-    fragment_size = 1000
+    # Fragment — 5000 hex chars per fragment
+    # 3.5MB → ~1400 fragments instead of ~7000
+    fragment_size = 5000
     fragments = [hex_data[i:i+fragment_size] for i in range(0, len(hex_data), fragment_size)]
-    print(f"[ENC] {len(fragments)} fragments")
+    total_frags = len(fragments)
+    print(f"[ENC] {total_frags} fragments")
 
     # XOR redundancy
     xor_fragment = create_xor_fragment(fragments)
     if xor_fragment:
         fragments.append(xor_fragment)
 
-    # Reed-Solomon
-    print(f"[ENC] Reed-Solomon...")
-    fragments = [encode_rs(f) for f in fragments]
+    # Reed-Solomon — the slowest step
+    print(f"[ENC] Reed-Solomon encoding...")
+    rs_fragments = []
+    for i, f in enumerate(fragments):
+        rs_fragments.append(encode_rs(f))
+        if (i + 1) % 200 == 0:
+            print(f"[ENC]   RS: {i+1}/{len(fragments)}")
+    fragments = rs_fragments
 
-    # DNA encoding with constraints
+    # DNA encoding + single-pass constraints (no retry loop)
     print(f"[ENC] DNA encoding...")
     dna_fragments = []
-    passed = 0
     chunk_id = 0
 
     for index, frag in enumerate(fragments):
-        dna, seed_idx, pad = encode_fragment_constrained(frag, encoding_type)
-
         if encoding_type == "6base":
-            meta = f"{chunk_id}:{str(index).zfill(8)}:{seed_idx}:{pad}"
+            dna, pad = hex_to_dna_6(frag)
+            meta = f"{chunk_id}:{str(index).zfill(8)}:{pad}"
         else:
-            meta = f"{chunk_id}:{str(index).zfill(8)}:{seed_idx}"
+            dna = hex_to_dna_encode_4(frag)
+            pad = 0
+            meta = f"{chunk_id}:{str(index).zfill(8)}"
 
+        dna = apply_dna_constraints(dna, encoding_type)
         dna = FORWARD_PRIMER + dna + REVERSE_PRIMER
         dna_fragments.append(f"{meta}|{dna}")
 
-        if seed_idx == 0:
-            passed += 1
-
-    print(f"[ENC] Done — {len(dna_fragments)} fragments, {passed} passed first try")
+    print(f"[ENC] Done — {len(dna_fragments)} fragments")
     return dna_fragments, file_hash, filename
 
 
@@ -254,7 +191,10 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
                 if encoding_type == "6base":
                     pad = int(parts[2])
                 else:
-                    seed_idx = int(parts[2])
+                    try:
+                        seed_idx = int(parts[2])
+                    except:
+                        pass
             elif len(parts) == 4:
                 seed_idx = int(parts[2])
                 pad = int(parts[3])
@@ -293,8 +233,12 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
                 else:
                     hex_frag = dna_to_hex_decode_4(dna)
 
-                if seed_idx > 0 and seed_idx < len(SCRAMBLE_SEEDS):
-                    hex_frag = unscramble_hex(hex_frag, SCRAMBLE_SEEDS[seed_idx])
+                if seed_idx > 0:
+                    SCRAMBLE_SEEDS = [0x00, 0xAA, 0x55, 0xCC, 0x33, 0xF0, 0x0F, 0x69]
+                    if seed_idx < len(SCRAMBLE_SEEDS):
+                        seed = SCRAMBLE_SEEDS[seed_idx]
+                        data = bytes.fromhex(hex_frag)
+                        hex_frag = bytes(b ^ seed for b in data).hex()
 
                 rs_decoded = decode_rs(hex_frag)
                 if rs_decoded:
