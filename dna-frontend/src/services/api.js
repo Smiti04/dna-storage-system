@@ -44,6 +44,11 @@ export const extractError = (err, fallback = "Something went wrong") => {
  
   return err?.message || fallback;
 };
+// =======================
+// BACKEND HEALTH CHECK
+// =======================
+export const checkBackendHealth = () => API.get("/health", { timeout: 8000 });
+
  
 // =======================
 // AUTH APIs
@@ -151,4 +156,3 @@ export const changePassword = (current_password, new_password) => {
   formData.append("new_password", new_password);
   return API.post("/change_password", formData);
 };
- 

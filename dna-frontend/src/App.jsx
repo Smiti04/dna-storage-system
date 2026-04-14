@@ -10,26 +10,26 @@ import Retrieve from "./pages/retrieve";
 import ViewFiles from "./pages/viewfiles";
 import SequenceViewer from "./pages/sequenceviewer";
 import ChangePassword from "./pages/changepassword";
-
-
-
+import BackendLoader from "./components/BackendLoader";
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/forgot" element={<ForgotPassword />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/upload" element={<Upload />} />
-        <Route path="/retrieve" element={<Retrieve />} />
-        <Route path="/files" element={<ViewFiles />} />
-        <Route path="/change-password" element={<ChangePassword />} />
-        <Route path="/sequence" element={<SequenceViewer />} />
-      </Routes>
-    </BrowserRouter>
+    <BackendLoader>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/forgot" element={<ForgotPassword />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/upload" element={<Upload />} />
+          <Route path="/retrieve" element={<Retrieve />} />
+          <Route path="/files" element={<ViewFiles />} />
+          <Route path="/change-password" element={<ChangePassword />} />
+          <Route path="/sequence" element={<SequenceViewer />} />
+        </Routes>
+      </BrowserRouter>
+    </BackendLoader>
   );
 }
 

@@ -434,6 +434,13 @@ def change_password_api(
     update_password(res[0], new_password)
     return {"message": "Password changed successfully"}
 # ===============================
+# HEALTH CHECK (keep-alive)
+# ===============================
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+# ===============================
 # HOME
 # ===============================
 @app.get("/")
