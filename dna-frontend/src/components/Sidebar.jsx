@@ -5,6 +5,7 @@ const links = [
   { path: "/upload",    label: "Upload",    icon: "↑" },
   { path: "/files",     label: "My Files",  icon: "◈" },
   { path: "/retrieve",  label: "Retrieve",  icon: "↓" },
+  { path: "/change-password", label: "Change Password", icon: "⚿" },
 ];
 
 function Sidebar() {

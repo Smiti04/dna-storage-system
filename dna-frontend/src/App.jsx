@@ -9,6 +9,10 @@ import Upload from "./pages/upload";
 import Retrieve from "./pages/retrieve";
 import ViewFiles from "./pages/viewfiles";
 import SequenceViewer from "./pages/sequenceviewer";
+import ChangePassword from "./pages/changepassword";
+
+
+
 
 function App() {
   return (
@@ -22,6 +26,7 @@ function App() {
         <Route path="/upload" element={<Upload />} />
         <Route path="/retrieve" element={<Retrieve />} />
         <Route path="/files" element={<ViewFiles />} />
+        <Route path="/change-password" element={<ChangePassword />} />
         <Route path="/sequence" element={<SequenceViewer />} />
       </Routes>
     </BrowserRouter>
