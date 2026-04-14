@@ -2,6 +2,8 @@ import os
 import secrets
 import hashlib
 import shutil
+import threading
+import time
 import uvicorn
 
 from fastapi import Depends, HTTPException, FastAPI, UploadFile, File, Form
@@ -26,6 +28,59 @@ app.add_middleware(
 )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+# ===============================
+# BACKGROUND JOB STORE
+# ===============================
+# In-memory job tracker (resets on redeploy — fine for free tier)
+jobs = {}  # job_id -> { status, progress, result, error, created_at }
+
+def _run_encode_job(job_id, temp_path, encoding_type, user_id, original_filename):
+    """Background encoding thread."""
+    try:
+        jobs[job_id]["status"] = "compressing"
+        jobs[job_id]["progress"] = 10
+
+        fragments, file_hash, fname = encode_file(temp_path, encoding_type)
+
+        jobs[job_id]["status"] = "storing"
+        jobs[job_id]["progress"] = 80
+
+        retrieval_key = secrets.token_hex(16)
+        key_hash = hashlib.sha256(retrieval_key.encode()).hexdigest()
+        file_id = secrets.token_hex(8)
+
+        size = os.path.getsize(temp_path)
+        save_file_metadata(file_id, user_id, fname, key_hash, size, encoding_type)
+
+        frag_folder_path = os.path.join(FRAGMENTS_FOLDER, file_id)
+        os.makedirs(frag_folder_path, exist_ok=True)
+        save_fragments(file_id, fragments, frag_folder_path)
+
+        add_block(file_id, file_hash)
+        merkle_root = compute_merkle_root(fragments)
+
+        os.remove(temp_path)
+
+        jobs[job_id]["status"] = "done"
+        jobs[job_id]["progress"] = 100
+        jobs[job_id]["result"] = {
+            "success": True,
+            "file_id": file_id,
+            "retrieval_key": retrieval_key,
+            "merkle_root": merkle_root,
+            "encoding_type": encoding_type,
+            "fragments_count": len(fragments),
+        }
+        print(f"Job {job_id} done: {file_id} ({encoding_type}, {len(fragments)} frags)")
+
+    except Exception as e:
+        print(f"Job {job_id} FAILED: {e}")
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = str(e)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 
 # ===============================
 # AUTH HELPER
@@ -81,7 +136,7 @@ def login_api(form_data: OAuth2PasswordRequestForm = Depends()):
     return {"access_token": token, "token_type": "bearer"}
 
 # ===============================
-# UPLOAD
+# UPLOAD (returns immediately, encodes in background)
 # ===============================
 @app.post("/upload")
 async def upload_file(
@@ -102,36 +157,88 @@ async def upload_file(
             os.remove(temp_path)
             return {"success": False, "error": "File exceeds 1 GB upload limit"}
 
-        fragments, file_hash, fname = encode_file(temp_path, encoding_type)
+        # For small files (< 1MB), encode synchronously (fast enough)
+        if size < 1_000_000:
+            fragments, file_hash, fname = encode_file(temp_path, encoding_type)
 
-        retrieval_key = secrets.token_hex(16)
-        key_hash = hashlib.sha256(retrieval_key.encode()).hexdigest()
-        file_id = secrets.token_hex(8)
+            retrieval_key = secrets.token_hex(16)
+            key_hash = hashlib.sha256(retrieval_key.encode()).hexdigest()
+            file_id = secrets.token_hex(8)
+            user_id = current_user[0]
+
+            save_file_metadata(file_id, user_id, fname, key_hash, size, encoding_type)
+
+            frag_folder_path = os.path.join(FRAGMENTS_FOLDER, file_id)
+            os.makedirs(frag_folder_path, exist_ok=True)
+            save_fragments(file_id, fragments, frag_folder_path)
+
+            add_block(file_id, file_hash)
+            merkle_root = compute_merkle_root(fragments)
+            os.remove(temp_path)
+
+            return {
+                "success": True,
+                "file_id": file_id,
+                "retrieval_key": retrieval_key,
+                "merkle_root": merkle_root,
+                "encoding_type": encoding_type
+            }
+
+        # For larger files, start background job
+        job_id = secrets.token_hex(8)
         user_id = current_user[0]
 
-        save_file_metadata(file_id, user_id, fname, key_hash, size, encoding_type)
+        jobs[job_id] = {
+            "status": "queued",
+            "progress": 0,
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+            "filename": file.filename,
+            "size": size,
+        }
 
-        frag_folder_path = os.path.join(FRAGMENTS_FOLDER, file_id)
-        os.makedirs(frag_folder_path, exist_ok=True)
-        save_fragments(file_id, fragments, frag_folder_path)
-
-        add_block(file_id, file_hash)
-        merkle_root = compute_merkle_root(fragments)
-        os.remove(temp_path)
-
-        print(f"Upload done: {file_id} ({encoding_type})")
+        thread = threading.Thread(
+            target=_run_encode_job,
+            args=(job_id, temp_path, encoding_type, user_id, file.filename),
+            daemon=True
+        )
+        thread.start()
 
         return {
             "success": True,
-            "file_id": file_id,
-            "retrieval_key": retrieval_key,
-            "merkle_root": merkle_root,
-            "encoding_type": encoding_type
+            "async": True,
+            "job_id": job_id,
+            "message": f"Encoding started in background ({size} bytes). Poll /job_status for progress."
         }
 
     except Exception as e:
         print("UPLOAD ERROR:", str(e))
         return {"success": False, "error": str(e)}
+
+# ===============================
+# JOB STATUS (poll for background encoding)
+# ===============================
+@app.get("/job_status/{job_id}")
+def job_status(job_id: str, current_user=Depends(get_current_user)):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    response = {
+        "job_id": job_id,
+        "status": job["status"],
+        "progress": job["progress"],
+        "filename": job.get("filename"),
+        "size": job.get("size"),
+    }
+
+    if job["status"] == "done":
+        response["result"] = job["result"]
+    elif job["status"] == "failed":
+        response["error"] = job["error"]
+
+    return response
 
 # ===============================
 # RETRIEVE
@@ -287,12 +394,11 @@ def analyze_constraints_api(
     if not fragments:
         raise HTTPException(status_code=404, detail="Fragments not found")
 
-    encoding_type = meta[3]  # "4base" or "6base"
+    encoding_type = meta[3]
 
     FORWARD_PRIMER = "ACGTACGTAC"
     REVERSE_PRIMER = "TGCATGCATG"
 
-    # Extract just the DNA sequences (strip metadata and primers)
     dna_sequences = []
     for raw in fragments:
         try:
@@ -306,7 +412,6 @@ def analyze_constraints_api(
         except:
             continue
 
-    # Run enhanced analysis
     result = run_fragment_analysis(dna_sequences, encoding_type)
 
     return {
@@ -370,9 +475,19 @@ def home():
     return {"message": "DNA Storage API running"}
 
 # ===============================
+# CLEANUP OLD JOBS (every request cleans jobs older than 1 hour)
+# ===============================
+@app.middleware("http")
+async def cleanup_old_jobs(request, call_next):
+    now = time.time()
+    expired = [jid for jid, j in jobs.items() if now - j.get("created_at", 0) > 3600]
+    for jid in expired:
+        del jobs[jid]
+    return await call_next(request)
+
+# ===============================
 # ENTRY
 # ===============================
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", 9000))
     uvicorn.run("main_api:app", host="0.0.0.0", port=port)
