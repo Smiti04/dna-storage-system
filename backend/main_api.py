@@ -13,6 +13,7 @@ from auth import create_access_token, decode_token
 from database import *
 from encoder import encode_file, decode_fragments, compute_merkle_root
 from blockchain import add_block
+from dna_constraints import analyze_constraints as run_analysis, analyze_fragments as run_fragment_analysis
 
 app = FastAPI(title="DNA Storage System")
 
@@ -118,7 +119,7 @@ async def upload_file(
         merkle_root = compute_merkle_root(fragments)
         os.remove(temp_path)
 
-        print(f"✅ Upload done: {file_id} ({encoding_type})")
+        print(f"Upload done: {file_id} ({encoding_type})")
 
         return {
             "success": True,
@@ -268,11 +269,12 @@ def get_sequence(
         "total_fragments": len(fragments),
         "fragments": fragments
     }
+
 # ===============================
-# ANALYZE DNA CONSTRAINTS
+# ANALYZE DNA CONSTRAINTS (ENHANCED)
 # ===============================
 @app.post("/analyze_constraints")
-def analyze_constraints(
+def analyze_constraints_api(
     file_id: str = Form(...),
     current_user=Depends(get_current_user)
 ):
@@ -290,108 +292,30 @@ def analyze_constraints(
     FORWARD_PRIMER = "ACGTACGTAC"
     REVERSE_PRIMER = "TGCATGCATG"
 
-    fragment_stats = []
-    total_gc = 0
-    total_bases = 0
-    total_homopolymer_violations = 0
-    total_fragments = len(fragments)
-
+    # Extract just the DNA sequences (strip metadata and primers)
+    dna_sequences = []
     for raw in fragments:
         try:
             pipe_idx = raw.index('|')
-            meta_part = raw[:pipe_idx]
-            dna = raw[pipe_idx+1:]
-
-            # Strip primers
+            dna = raw[pipe_idx + 1:]
             if dna.startswith(FORWARD_PRIMER):
                 dna = dna[len(FORWARD_PRIMER):]
             if dna.endswith(REVERSE_PRIMER):
                 dna = dna[:-len(REVERSE_PRIMER)]
-
-            parts = meta_part.split(':')
-            chunk_id = int(parts[0])
-            frag_index = int(parts[1])
-
-            # GC content — M (5mC) counts as GC in 6base
-            if encoding_type == "6base":
-                gc_count = dna.count('G') + dna.count('C') + dna.count('M')
-            else:
-                gc_count = dna.count('G') + dna.count('C')
-
-            gc = gc_count / len(dna) if dna else 0
-            gc_pct = round(gc * 100, 2)
-            gc_pass = 45 <= gc_pct <= 55
-
-            # Homopolymer runs
-            max_run = 1
-            current_run = 1
-            violations = 0
-            for i in range(1, len(dna)):
-                if dna[i] == dna[i-1]:
-                    current_run += 1
-                    if current_run > 3:
-                        violations += 1
-                    max_run = max(max_run, current_run)
-                else:
-                    current_run = 1
-            homopolymer_pass = violations == 0
-
-            # Base composition
-            base_counts = {
-                "A": dna.count('A'),
-                "T": dna.count('T'),
-                "G": dna.count('G'),
-                "C": dna.count('C'),
-            }
-            if encoding_type == "6base":
-                base_counts['M'] = dna.count('M')  # 5mC
-                base_counts['X'] = dna.count('X')  # 6mA
-
-            # Accumulate totals
-            if encoding_type == "6base":
-                total_gc += dna.count('G') + dna.count('C') + dna.count('M')
-            else:
-                total_gc += dna.count('G') + dna.count('C')
-
-            total_bases += len(dna)
-            total_homopolymer_violations += violations
-
-            fragment_stats.append({
-                "chunk_id": chunk_id,
-                "frag_index": frag_index,
-                "length": len(dna),
-                "gc_pct": gc_pct,
-                "gc_pass": gc_pass,
-                "max_homopolymer_run": max_run,
-                "homopolymer_violations": violations,
-                "homopolymer_pass": homopolymer_pass,
-                "base_counts": base_counts,
-                "overall_pass": gc_pass and homopolymer_pass,
-            })
+            dna_sequences.append(dna)
         except:
             continue
 
-    overall_gc = round((total_gc / total_bases * 100), 2) if total_bases else 0
-    gc_pass_count = sum(1 for f in fragment_stats if f["gc_pass"])
-    homo_pass_count = sum(1 for f in fragment_stats if f["homopolymer_pass"])
-    all_pass_count = sum(1 for f in fragment_stats if f["overall_pass"])
+    # Run enhanced analysis
+    result = run_fragment_analysis(dna_sequences, encoding_type)
 
     return {
         "file_id": file_id,
         "encoding_type": encoding_type,
-        "total_fragments": total_fragments,
-        "summary": {
-            "overall_gc_pct": overall_gc,
-            "gc_pass_count": gc_pass_count,
-            "gc_fail_count": total_fragments - gc_pass_count,
-            "homopolymer_pass_count": homo_pass_count,
-            "homopolymer_fail_count": total_fragments - homo_pass_count,
-            "total_violations": total_homopolymer_violations,
-            "all_pass_count": all_pass_count,
-            "all_fail_count": total_fragments - all_pass_count,
-        },
-        "fragments": fragment_stats
+        "total_fragments": len(fragments),
+        **result
     }
+
 # ===============================
 # CHANGE PASSWORD
 # ===============================
@@ -404,12 +328,10 @@ def change_password_api(
     user_id = current_user[0]
     username = current_user[1]
 
-    # Verify current password
     user = login_user(username, current_password)
     if not user:
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
-    # Validate new password strength
     if len(new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
@@ -421,7 +343,6 @@ def change_password_api(
     if not re.search(r'[^a-zA-Z0-9]', new_password):
         raise HTTPException(status_code=400, detail="Password must contain a special character")
 
-    # Get user email for update
     conn = connect()
     c = conn.cursor()
     c.execute("SELECT email FROM users WHERE id=?", (user_id,))
@@ -433,8 +354,9 @@ def change_password_api(
 
     update_password(res[0], new_password)
     return {"message": "Password changed successfully"}
+
 # ===============================
-# HEALTH CHECK (keep-alive)
+# HEALTH CHECK
 # ===============================
 @app.get("/health")
 def health():
