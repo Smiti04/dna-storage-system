@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import { getUserFiles, deleteFile, analyzeConstraints, extractError } from "../services/api";
 import DNAConstraintsPanel from "../components/DNAConstraintsPanel";
+import { downloadConstraintsReport } from "../utils/downloadReport";
 
 function ViewFiles() {
   const nav = useNavigate();
@@ -33,6 +34,11 @@ function ViewFiles() {
       setCError(extractError(e, "Analysis failed"));
     }
     setCLoading(false);
+  };
+
+  const getFilename = (fid) => {
+    const f = files.find(x => x.file_id === fid);
+    return f ? f.filename : fid;
   };
 
   const acts = (f) => [
@@ -78,10 +84,10 @@ function ViewFiles() {
                         color: (a.label === "Constraints" && cFileId === f.file_id) ? "#fff" : a.color,
                         fontSize: "12px", fontWeight: "600", cursor: "pointer", transition: "all 0.15s"
                       }}
-                        onMouseOver={e => { e.target.style.background = a.color; e.target.style.color = "#fff"; }}
+                        onMouseOver={e => { e.currentTarget.style.background = a.color; e.currentTarget.style.color = "#fff"; }}
                         onMouseOut={e => {
-                          if (a.label === "Constraints" && cFileId === f.file_id) { e.target.style.background = a.color; e.target.style.color = "#fff"; }
-                          else { e.target.style.background = "transparent"; e.target.style.color = a.color; }
+                          if (a.label === "Constraints" && cFileId === f.file_id) { e.currentTarget.style.background = a.color; e.currentTarget.style.color = "#fff"; }
+                          else { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = a.color; }
                         }}>
                         {a.label}
                       </button>
@@ -89,7 +95,6 @@ function ViewFiles() {
                   </div>
                 </div>
 
-                {/* Constraints panel — shows below the file row */}
                 {cFileId === f.file_id && (
                   <div style={{ padding: "16px 18px", borderBottom: i < files.length - 1 ? "1px solid #2a2440" : "none", background: "#0e0c18" }}>
                     {cLoading && (
@@ -101,7 +106,19 @@ function ViewFiles() {
                     {cError && (
                       <div style={{ fontSize: "13px", fontWeight: "600", color: "#ef4444", padding: "8px 12px", background: "#1a0a0a", borderRadius: "6px", border: "1px solid rgba(239,68,68,0.3)" }}>{cError}</div>
                     )}
-                    {cData && <DNAConstraintsPanel data={cData} />}
+                    {cData && (
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
+                          <button onClick={() => downloadConstraintsReport(cData, getFilename(f.file_id))}
+                            style={{ padding: "6px 14px", background: "transparent", border: "1px solid #48dbfb44", borderRadius: "5px", color: "#48dbfb", fontSize: "12px", fontWeight: "600", cursor: "pointer", transition: "all 0.15s", display: "flex", alignItems: "center", gap: "6px" }}
+                            onMouseOver={e => { e.currentTarget.style.background = "#48dbfb"; e.currentTarget.style.color = "#fff"; }}
+                            onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#48dbfb"; }}>
+                            ↓ Download Report
+                          </button>
+                        </div>
+                        <DNAConstraintsPanel data={cData} />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

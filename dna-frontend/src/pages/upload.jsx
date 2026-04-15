@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import { uploadFile, analyzeConstraints, getJobStatus, extractError } from "../services/api";
 import DNAConstraintsPanel from "../components/DNAConstraintsPanel";
+import { downloadConstraintsReport } from "../utils/downloadReport";
 
 function Upload() {
   const nav = useNavigate();
@@ -20,136 +21,57 @@ function Upload() {
 
   const pollJob = async (jobId) => {
     let attempts = 0;
-    const maxAttempts = 300; // 5 minutes at 1s intervals
+    const maxAttempts = 300;
     while (attempts < maxAttempts) {
       attempts++;
       await new Promise((r) => setTimeout(r, 2000));
       try {
         const res = await getJobStatus(jobId);
         const job = res.data;
-
         setProgress(job.progress || 0);
-
         if (job.status === "compressing") addLog("Compressing file...");
         if (job.status === "storing") addLog("Storing fragments...");
-
         if (job.status === "done") {
           const r = job.result;
           addLog("Reed-Solomon applied...");
           addLog("DNA generated...");
           addLog("Blockchain stored...");
           addLog("✓ Upload complete");
-          setResult(r);
-          setStatus("done");
-          setProgress(100);
-
-          // Auto-download key file
-          const kc = [
-            `FILE ID: ${r.file_id}`,
-            `RETRIEVAL KEY: ${r.retrieval_key}`,
-            `MERKLE ROOT: ${r.merkle_root}`,
-            `ENCODING: ${r.encoding_type}`,
-          ].join("\n");
-          const b = new Blob([kc], { type: "text/plain" });
-          const u = URL.createObjectURL(b);
-          const a = document.createElement("a");
-          a.href = u;
-          a.download = `${file.name}_key.txt`;
-          a.click();
-          URL.revokeObjectURL(u);
-
-          // Run constraints analysis
-          addLog("Analyzing constraints...");
-          setAzing(true);
-          try {
-            const x = await analyzeConstraints(r.file_id);
-            setCData(x.data);
-            addLog("✓ Analysis complete");
-          } catch {
-            addLog("⚠ Analysis failed");
-          }
-          setAzing(false);
-          return;
+          setResult(r); setStatus("done"); setProgress(100);
+          const kc = [`FILE ID: ${r.file_id}`, `RETRIEVAL KEY: ${r.retrieval_key}`, `MERKLE ROOT: ${r.merkle_root}`, `ENCODING: ${r.encoding_type}`].join("\n");
+          const b = new Blob([kc], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `${file.name}_key.txt`; a.click(); URL.revokeObjectURL(u);
+          addLog("Analyzing constraints..."); setAzing(true);
+          try { const x = await analyzeConstraints(r.file_id); setCData(x.data); addLog("✓ Analysis complete"); } catch { addLog("⚠ Analysis failed"); }
+          setAzing(false); return;
         }
-
-        if (job.status === "failed") {
-          addLog(`✗ ${job.error || "Encoding failed"}`);
-          setStatus("error");
-          return;
-        }
-      } catch {
-        // Network blip, keep polling
-      }
+        if (job.status === "failed") { addLog(`✗ ${job.error || "Encoding failed"}`); setStatus("error"); return; }
+      } catch { }
     }
-    addLog("✗ Encoding timed out");
-    setStatus("error");
+    addLog("✗ Encoding timed out"); setStatus("error");
   };
 
   const doUp = async () => {
     if (!file) return;
-    setStatus("uploading");
-    setLog([]);
-    setCData(null);
-    setResult(null);
-    setProgress(0);
+    setStatus("uploading"); setLog([]); setCData(null); setResult(null); setProgress(0);
     addLog(`Preparing: ${file.name}`);
     addLog(`Encoding: ${enc === "6base" ? "6-Base Epigenetic" : "4-Base Standard"}`);
     addLog("Uploading to server...");
     try {
       const r = await uploadFile(file, enc, (m) => addLog(m));
-
-      // Async background job (large files)
       if (r.data.async && r.data.job_id) {
-        addLog(`File received — encoding in background...`);
-        addLog(`Job ID: ${r.data.job_id}`);
-        setStatus("encoding");
-        await pollJob(r.data.job_id);
-        return;
+        addLog(`File received — encoding in background...`); addLog(`Job ID: ${r.data.job_id}`);
+        setStatus("encoding"); await pollJob(r.data.job_id); return;
       }
-
-      // Sync response (small files)
       if (r.data.success) {
-        addLog("Compressing...");
-        addLog("Reed-Solomon applied...");
-        addLog("DNA generated...");
-        addLog("Blockchain stored...");
-        addLog("✓ Upload complete");
-        setResult(r.data);
-        setStatus("done");
-        setProgress(100);
-
-        const kc = [
-          `FILE ID: ${r.data.file_id}`,
-          `RETRIEVAL KEY: ${r.data.retrieval_key}`,
-          `MERKLE ROOT: ${r.data.merkle_root}`,
-          `ENCODING: ${r.data.encoding_type}`,
-        ].join("\n");
-        const b = new Blob([kc], { type: "text/plain" });
-        const u = URL.createObjectURL(b);
-        const a = document.createElement("a");
-        a.href = u;
-        a.download = `${file.name}_key.txt`;
-        a.click();
-        URL.revokeObjectURL(u);
-
-        addLog("Analyzing constraints...");
-        setAzing(true);
-        try {
-          const x = await analyzeConstraints(r.data.file_id);
-          setCData(x.data);
-          addLog("✓ Analysis complete");
-        } catch {
-          addLog("⚠ Analysis failed");
-        }
+        addLog("Compressing..."); addLog("Reed-Solomon applied..."); addLog("DNA generated..."); addLog("Blockchain stored..."); addLog("✓ Upload complete");
+        setResult(r.data); setStatus("done"); setProgress(100);
+        const kc = [`FILE ID: ${r.data.file_id}`, `RETRIEVAL KEY: ${r.data.retrieval_key}`, `MERKLE ROOT: ${r.data.merkle_root}`, `ENCODING: ${r.data.encoding_type}`].join("\n");
+        const b = new Blob([kc], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `${file.name}_key.txt`; a.click(); URL.revokeObjectURL(u);
+        addLog("Analyzing constraints..."); setAzing(true);
+        try { const x = await analyzeConstraints(r.data.file_id); setCData(x.data); addLog("✓ Analysis complete"); } catch { addLog("⚠ Analysis failed"); }
         setAzing(false);
-      } else {
-        addLog(`✗ ${r.data.error}`);
-        setStatus("error");
-      }
-    } catch (e) {
-      addLog(`✗ ${extractError(e, "Upload failed")}`);
-      setStatus("error");
-    }
+      } else { addLog(`✗ ${r.data.error}`); setStatus("error"); }
+    } catch (e) { addLog(`✗ ${extractError(e, "Upload failed")}`); setStatus("error"); }
   };
 
   const encs = [
@@ -206,7 +128,6 @@ function Upload() {
           {status === "uploading" ? "Uploading..." : status === "encoding" ? "Encoding..." : "Encode & Store"}
         </button>
 
-        {/* Progress bar for background encoding */}
         {status === "encoding" && (
           <div style={{ marginBottom: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
@@ -216,9 +137,7 @@ function Upload() {
             <div style={{ width: "100%", height: "6px", background: "#1a1528", borderRadius: "3px", overflow: "hidden" }}>
               <div style={{ width: `${progress}%`, height: "100%", background: "linear-gradient(90deg, #a29bfe, #48dbfb)", borderRadius: "3px", transition: "width 0.5s ease" }} />
             </div>
-            <div style={{ fontSize: "11px", color: "#6b5f8a", marginTop: "6px", fontWeight: "500" }}>
-              Large files are encoded in the background. This page will update automatically.
-            </div>
+            <div style={{ fontSize: "11px", color: "#6b5f8a", marginTop: "6px", fontWeight: "500" }}>Large files are encoded in the background. This page will update automatically.</div>
           </div>
         )}
 
@@ -243,7 +162,21 @@ function Upload() {
         )}
 
         {azing && <div className="card" style={{ marginTop: "20px", color: "#48dbfb", fontWeight: "600" }}>Analyzing DNA constraints...</div>}
-        {cData && <DNAConstraintsPanel data={cData} />}
+
+        {cData && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "20px", marginBottom: "10px" }}>
+              <div style={{ ...sl, marginBottom: 0 }}>DNA Constraints Analysis</div>
+              <button onClick={() => downloadConstraintsReport(cData, file?.name || "upload")}
+                style={{ padding: "6px 14px", background: "transparent", border: "1px solid #48dbfb44", borderRadius: "5px", color: "#48dbfb", fontSize: "12px", fontWeight: "600", cursor: "pointer", transition: "all 0.15s", display: "flex", alignItems: "center", gap: "6px" }}
+                onMouseOver={e => { e.currentTarget.style.background = "#48dbfb"; e.currentTarget.style.color = "#fff"; }}
+                onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#48dbfb"; }}>
+                ↓ Download Report
+              </button>
+            </div>
+            <DNAConstraintsPanel data={cData} />
+          </div>
+        )}
       </div>
     </div>
   );
