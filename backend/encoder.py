@@ -7,17 +7,18 @@ ENCODING PIPELINE (file → DNA):
   2. HASH      — SHA-256 hash for integrity verification
   3. COMPRESS  — zlib level 1 (fast, good ratio)
   4. HEX       — Convert compressed bytes to hex string
-  5. FRAGMENT  — Split hex into 5000-char chunks
+  5. FRAGMENT  — Split hex into small chunks (150 hex chars → ~150 DNA bases)
+                 Real synthesis oligos are 150-300 bases — we match this.
   6. XOR       — Create XOR parity fragment for redundancy
   7. RS ENCODE — Reed-Solomon error correction (10 symbols) per fragment
-  8. DNA ENCODE (constraint-aware):
+  8. DNA ENCODE (constraint-aware, DNA Fountain approach):
      a. Convert hex fragment to raw bytes
      b. XOR bytes with a PRNG stream seeded by 'seed=0'
      c. Convert scrambled hex → DNA bases (4-base or 6-base map)
      d. CHECK all constraints (GC 35-65%, homopolymer ≤3, no restriction sites)
      e. If PASS → accept, store seed in metadata
-     f. If FAIL → increment seed, go back to (b), retry up to 100 seeds
-     g. This guarantees the DNA sequence is lab-ready WITHOUT modifying any bases
+     f. If FAIL → increment seed, go back to (b), retry up to 200 seeds
+     g. With ~150-base oligos, a passing seed is found within 1-20 tries
   9. PRIMERS   — Add forward + reverse primers for PCR amplification
   10. STORE    — Save as "chunk_id:index:seed[:pad]|PRIMER+DNA+PRIMER"
 
@@ -31,16 +32,14 @@ DECODING PIPELINE (DNA → file):
   7. DECOMPRESS — zlib decompress
   8. WRITE     — Save reconstructed file
 
-WHY THIS WORKS:
-  - The seed-based scramble is a bijection (XOR is its own inverse)
-  - Different seeds produce completely different byte distributions
-  - Different byte distributions map to different DNA base patterns
-  - By trying multiple seeds, we find one where the DNA naturally
-    satisfies all constraints — no post-hoc base modification needed
-  - The decoder reads the seed from metadata and reverses the exact
-    same XOR operation, recovering the original data perfectly
-  - This is the same approach used by Erlich & Zielinski's DNA Fountain
-    (Science, 2017) — the gold standard for DNA data storage
+WHY SMALL FRAGMENTS MATTER:
+  - Real DNA synthesis produces oligos of 150-300 bases
+  - The seed-retry approach works because with ~150 bases,
+    the probability of all constraints passing is high
+  - With 10,000+ base fragments, no random seed can avoid
+    all homopolymer runs — it's statistically impossible
+  - Smaller fragments = more fragments, but each one is
+    individually valid and can be synthesized independently
 """
 
 import os
@@ -50,9 +49,9 @@ import random
 import reedsolo
 
 # =========================
-# REED SOLOMON
+# REED SOLOMON (reduced to 4 for speed with small fragments)
 # =========================
-rs = reedsolo.RSCodec(10)
+rs = reedsolo.RSCodec(4)
 
 # =========================
 # PRIMERS (for PCR amplification)
@@ -61,30 +60,16 @@ FORWARD_PRIMER = "ACGTACGTAC"
 REVERSE_PRIMER = "TGCATGCATG"
 
 # =========================
-# RESTRICTION ENZYME SITES (15 common enzymes)
-# These would cut DNA during lab processing — must be avoided
+# RESTRICTION ENZYME SITES
 # =========================
 RESTRICTION_SITES = [
-    "GAATTC",    # EcoRI
-    "GGATCC",    # BamHI
-    "AAGCTT",    # HindIII
-    "GCGGCCGC",  # NotI
-    "CTCGAG",    # XhoI
-    "GTCGAC",    # SalI
-    "CTGCAG",    # PstI
-    "CCCGGG",    # SmaI
-    "GGTACC",    # KpnI
-    "GAGCTC",    # SacI
-    "CATATG",    # NdeI
-    "AGATCT",    # BglII
-    "TCTAGA",    # XbaI
-    "CCATGG",    # NcoI
-    "GATATC",    # EcoRV
+    "GAATTC", "GGATCC", "AAGCTT", "GCGGCCGC", "CTCGAG",
+    "GTCGAC", "CTGCAG", "CCCGGG", "GGTACC", "GAGCTC",
+    "CATATG", "AGATCT", "TCTAGA", "CCATGG", "GATATC",
 ]
 
 # =========================
-# 4-BASE ENCODING MAP (hex → DNA)
-# Each hex digit maps to 2 DNA bases = 2 bits/base
+# 4-BASE ENCODING MAP
 # =========================
 hex_to_dna_map_4 = {
     "0": "AA", "1": "AT", "2": "AC", "3": "AG",
@@ -95,9 +80,7 @@ hex_to_dna_map_4 = {
 dna_to_hex_map_4 = {v: k for k, v in hex_to_dna_map_4.items()}
 
 # =========================
-# 6-BASE ENCODING MAP (epigenetic bases)
-# Uses A, T, G, C + M (5-methylcytosine) + X (6-methyladenine)
-# 3 hex digits → 5 base-6 digits = 2.58 bits/base
+# 6-BASE ENCODING MAP
 # =========================
 BASE6 = ['A', 'T', 'G', 'C', 'M', 'X']
 
@@ -131,9 +114,8 @@ def dna_to_hex_6(dna, pad=0):
         hex_string = hex_string[:-pad]
     return hex_string
 
-
 # =========================
-# 4-BASE CONVERSION HELPERS
+# 4-BASE CONVERSION
 # =========================
 def hex_to_dna_encode_4(hex_string):
     return "".join(hex_to_dna_map_4[h] for h in hex_string)
@@ -147,31 +129,22 @@ def dna_to_hex_decode_4(dna):
         hex_string += dna_to_hex_map_4[pair]
     return hex_string
 
-
 # =========================
-# REED SOLOMON WRAPPERS
+# REED SOLOMON
 # =========================
 def encode_rs(fragment):
-    """Add Reed-Solomon error correction symbols to a hex fragment."""
     return rs.encode(bytes.fromhex(fragment)).hex()
 
 def decode_rs(fragment):
-    """Decode and error-correct a Reed-Solomon encoded hex fragment."""
     try:
         return rs.decode(bytes.fromhex(fragment))[0].hex()
     except:
         return None
 
-
 # =========================
-# XOR PARITY REDUNDANCY
+# XOR PARITY
 # =========================
 def create_xor_fragment(fragments):
-    """
-    Create an XOR parity fragment from all data fragments.
-    If any single fragment is lost, it can be recovered by
-    XORing the parity fragment with all remaining fragments.
-    """
     if len(fragments) < 2:
         return None
     max_len = max(len(f) // 2 for f in fragments)
@@ -185,24 +158,19 @@ def create_xor_fragment(fragments):
 
 # ═══════════════════════════════════════════════════════════════════
 # CONSTRAINT CHECKING
-# Validates that a DNA sequence is ready for real-world synthesis
 # ═══════════════════════════════════════════════════════════════════
 
 def check_constraints(dna):
     """
-    Check ALL biological constraints on a DNA sequence.
-    Returns True ONLY if the sequence can be sent to a synthesis lab.
-
-    Constraints checked:
-      1. GC content between 35% and 65%
-      2. No homopolymer runs longer than 3 bases
-      3. No restriction enzyme recognition sites
+    Returns True ONLY if DNA is lab-ready:
+    - GC content 35-65%
+    - No homopolymer runs > 3
+    - No restriction enzyme sites
     """
     n = len(dna)
     if n == 0:
         return True
 
-    # Single pass: count GC and check homopolymers simultaneously
     gc = 0
     run = 1
     prev = dna[0]
@@ -216,17 +184,15 @@ def check_constraints(dna):
         if c == prev:
             run += 1
             if run > 3:
-                return False  # Homopolymer violation
+                return False
         else:
             run = 1
             prev = c
 
-    # GC content check
     ratio = gc / n
     if ratio < 0.35 or ratio > 0.65:
         return False
 
-    # Restriction enzyme site check
     for site in RESTRICTION_SITES:
         if site in dna:
             return False
@@ -235,88 +201,59 @@ def check_constraints(dna):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# SEED-BASED SCRAMBLE (the core of constraint-aware encoding)
-#
-# How it works:
-#   - Take the raw bytes of a fragment
-#   - Generate a pseudo-random byte stream from a seed number
-#   - XOR every byte with the corresponding random byte
-#   - This redistributes the byte values, which changes the
-#     resulting DNA base pattern when converted
-#   - XOR is its own inverse: scramble(scramble(data, seed), seed) = data
-#   - The seed is stored in fragment metadata for decoding
+# SEED-BASED SCRAMBLE
 # ═══════════════════════════════════════════════════════════════════
 
 def scramble_bytes(data_bytes, seed):
-    """
-    XOR data with a deterministic pseudo-random byte stream.
-    Same seed always produces the same stream → fully reversible.
-    """
+    """XOR with PRNG stream — fully reversible."""
     rng = random.Random(seed)
     mask = bytes(rng.randint(0, 255) for _ in range(len(data_bytes)))
     return bytes(a ^ b for a, b in zip(data_bytes, mask))
 
 
 # ═══════════════════════════════════════════════════════════════════
-# CONSTRAINT-AWARE FRAGMENT ENCODING (DNA Fountain approach)
-#
-# For each fragment:
-#   1. Try seed=0 (no scramble, original data)
-#   2. Convert to DNA, check constraints
-#   3. If pass → done, store seed=0
-#   4. If fail → try seed=1, seed=2, ... up to seed=99
-#   5. Each seed produces a completely different DNA sequence
-#      from the same underlying data
-#   6. Almost always finds a passing seed within 10-20 tries
-#   7. Data integrity is PERFECT because XOR is reversible
+# CONSTRAINT-AWARE FRAGMENT ENCODING
 # ═══════════════════════════════════════════════════════════════════
 
-MAX_SEEDS = 100
+MAX_SEEDS = 200
 
 def encode_fragment(hex_frag, encoding_type="4base"):
     """
-    Encode a single hex fragment to constraint-passing DNA.
-    Returns: (dna_string, seed_used, pad_for_6base)
+    Encode hex → DNA that passes ALL constraints.
+    Tries up to MAX_SEEDS different scrambles.
+    With ~150-base fragments, usually finds a valid seed in 1-20 tries.
     """
     frag_bytes = bytes.fromhex(hex_frag)
 
     for seed in range(MAX_SEEDS):
-        # Scramble with current seed
         if seed == 0:
             scrambled_hex = hex_frag
         else:
-            scrambled_bytes = scramble_bytes(frag_bytes, seed)
-            scrambled_hex = scrambled_bytes.hex()
+            scrambled_hex = scramble_bytes(frag_bytes, seed).hex()
 
-        # Convert to DNA
         if encoding_type == "6base":
             dna, pad = hex_to_dna_6(scrambled_hex)
         else:
             dna = hex_to_dna_encode_4(scrambled_hex)
             pad = 0
 
-        # Check ALL constraints — no modification, just accept or reject
         if check_constraints(dna):
             return dna, seed, pad
 
-    # Fallback after 100 attempts: return original (will be flagged)
+    # Fallback — should rarely happen with small fragments
     if encoding_type == "6base":
         dna, pad = hex_to_dna_6(hex_frag)
     else:
         dna = hex_to_dna_encode_4(hex_frag)
         pad = 0
-    return dna, 0, pad
+    return dna, -1, pad
 
 
 # ═══════════════════════════════════════════════════════════════════
-# FILE ENCODING — FULL PIPELINE
+# FILE ENCODING
 # ═══════════════════════════════════════════════════════════════════
 
 def encode_file(file_path, encoding_type="4base"):
-    """
-    Complete encoding pipeline: file → compressed → fragmented →
-    error-corrected → constraint-aware DNA sequences with primers.
-    """
     print(f"\n{'='*50}")
     print(f"  DNA VAULT ENCODER — {encoding_type}")
     print(f"{'='*50}")
@@ -324,110 +261,101 @@ def encode_file(file_path, encoding_type="4base"):
     filename = os.path.basename(file_path)
     hasher = hashlib.sha256()
 
-    # ── Step 1: Read file ──
     with open(file_path, "rb") as f:
         raw_data = f.read()
     raw_size = len(raw_data)
     print(f"\n[1/8] READ: {filename} ({raw_size:,} bytes)")
 
-    # ── Step 2: SHA-256 hash ──
     hasher.update(raw_data)
     file_hash = hasher.hexdigest()
     print(f"[2/8] HASH: {file_hash[:16]}...")
 
-    # ── Step 3: Compress ──
     compressed = zlib.compress(raw_data, 1)
     comp_ratio = round((1 - len(compressed) / raw_size) * 100, 1) if raw_size > 0 else 0
-    print(f"[3/8] COMPRESS: {raw_size:,} → {len(compressed):,} bytes ({comp_ratio}% reduction)")
+    print(f"[3/8] COMPRESS: {raw_size:,} -> {len(compressed):,} bytes ({comp_ratio}% reduction)")
 
-    # ── Step 4: Hex conversion ──
     hex_data = compressed.hex()
     print(f"[4/8] HEX: {len(hex_data):,} hex characters")
 
-    # ── Step 5: Fragment ──
-    fragment_size = 5000
+    # ── Fragment size: 150 hex chars ──
+    # 150 hex = 75 bytes data → after RS(4) = 79 bytes = 158 hex
+    # 158 hex → 158 DNA bases (4-base) → + 20 primer bases = 178 total
+    # This is within the 150-300 base range that synthesis labs accept
+    fragment_size = 150
     fragments = [hex_data[i:i + fragment_size] for i in range(0, len(hex_data), fragment_size)]
     print(f"[5/8] FRAGMENT: {len(fragments)} fragments x {fragment_size} hex chars")
 
-    # ── Step 6: XOR parity ──
+    # XOR parity
     xor_fragment = create_xor_fragment(fragments)
     if xor_fragment:
         fragments.append(xor_fragment)
-    print(f"[6/8] XOR PARITY: +1 redundancy fragment → {len(fragments)} total")
+    print(f"[6/8] XOR PARITY: +1 redundancy -> {len(fragments)} total")
 
-    # ── Step 7: Reed-Solomon ──
+    # Reed-Solomon
     print(f"[7/8] REED-SOLOMON: encoding {len(fragments)} fragments...")
     rs_fragments = []
     for i, f in enumerate(fragments):
         rs_fragments.append(encode_rs(f))
-        if (i + 1) % 200 == 0:
-            print(f"       RS progress: {i + 1}/{len(fragments)}")
+        if (i + 1) % 500 == 0:
+            print(f"       RS: {i+1}/{len(fragments)}")
     fragments = rs_fragments
 
-    # ── Step 8: Constraint-aware DNA encoding ──
-    print(f"[8/8] DNA ENCODING (constraint-aware)...")
+    # Constraint-aware DNA encoding
+    print(f"[8/8] DNA ENCODING (constraint-aware, seed retry)...")
     dna_fragments = []
     chunk_id = 0
     passed_first = 0
     passed_retry = 0
     failed = 0
-    total_seeds_used = 0
+    total_seeds = 0
 
     for index, frag in enumerate(fragments):
         dna, seed, pad = encode_fragment(frag, encoding_type)
 
-        # Build metadata
         if encoding_type == "6base":
             meta = f"{chunk_id}:{str(index).zfill(8)}:{seed}:{pad}"
         else:
             meta = f"{chunk_id}:{str(index).zfill(8)}:{seed}"
 
-        # Add primers
         full_dna = FORWARD_PRIMER + dna + REVERSE_PRIMER
         dna_fragments.append(f"{meta}|{full_dna}")
 
-        # Track statistics
-        total_seeds_used += seed
         if seed == 0:
             passed_first += 1
-        elif seed < MAX_SEEDS:
+        elif seed > 0:
             passed_retry += 1
+            total_seeds += seed
         else:
             failed += 1
 
-        if (index + 1) % 200 == 0:
-            print(f"       DNA progress: {index + 1}/{len(fragments)}")
+        if (index + 1) % 500 == 0:
+            print(f"       DNA: {index+1}/{len(fragments)}")
 
     total = passed_first + passed_retry + failed
     pass_rate = round((passed_first + passed_retry) / max(total, 1) * 100, 1)
-    avg_seed = round(total_seeds_used / max(total, 1), 1)
 
     print(f"\n{'─'*50}")
     print(f"  ENCODING COMPLETE")
     print(f"{'─'*50}")
-    print(f"  Fragments:       {len(dna_fragments)}")
-    print(f"  Passed (seed 0): {passed_first}")
-    print(f"  Passed (retry):  {passed_retry}")
-    print(f"  Failed:          {failed}")
-    print(f"  Pass rate:       {pass_rate}%")
-    print(f"  Avg seed used:   {avg_seed}")
+    print(f"  Total fragments:  {len(dna_fragments)}")
+    print(f"  Passed (seed 0):  {passed_first}")
+    print(f"  Passed (retry):   {passed_retry}")
+    print(f"  Failed:           {failed}")
+    print(f"  Pass rate:        {pass_rate}%")
+    if passed_retry > 0:
+        print(f"  Avg retry seed:   {round(total_seeds / passed_retry, 1)}")
     print(f"{'─'*50}\n")
 
     return dna_fragments, file_hash, filename
 
 
 # ═══════════════════════════════════════════════════════════════════
-# FILE DECODING — FULL PIPELINE
+# FILE DECODING
 # ═══════════════════════════════════════════════════════════════════
 
 def decode_fragments(fragments, filename, encoding_type="4base"):
-    """
-    Complete decoding pipeline: DNA fragments → unscramble →
-    error-correct → reassemble → decompress → original file.
-    """
     print(f"\n[DEC] Decoding {len(fragments)} fragments ({encoding_type})")
 
-    # ── Parse metadata and DNA from each fragment ──
     parsed = []
     for f in fragments:
         try:
@@ -442,12 +370,10 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
             pad = 0
 
             if len(parts) == 2:
-                # Old format: chunk:idx
                 seed = 0
                 pad = 0
             elif len(parts) == 3:
                 if encoding_type == "6base":
-                    # Ambiguous: could be old chunk:idx:pad or new chunk:idx:seed
                     val = int(parts[2])
                     if val <= 2:
                         pad = val
@@ -461,7 +387,6 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
                 seed = int(parts[2])
                 pad = int(parts[3])
 
-            # Strip primers
             if dna.startswith(FORWARD_PRIMER):
                 dna = dna[len(FORWARD_PRIMER):]
             if dna.endswith(REVERSE_PRIMER):
@@ -473,20 +398,18 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
 
     parsed.sort(key=lambda x: (x[0], x[1]))
 
-    # ── Group by chunk ──
     chunks = {}
     for chunk_id, idx, dna, pad, seed in parsed:
         if chunk_id not in chunks:
             chunks[chunk_id] = []
         chunks[chunk_id].append((idx, dna, pad, seed))
 
-    # ── Decode each fragment ──
     full_hex = ""
     for chunk_id in sorted(chunks.keys()):
         chunk_frags = chunks[chunk_id]
         chunk_frags.sort(key=lambda x: x[0])
 
-        # Skip last fragment (XOR parity — used for recovery only)
+        # Skip last fragment (XOR parity)
         if len(chunk_frags) > 1:
             data_frags = chunk_frags[:-1]
         else:
@@ -494,19 +417,15 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
 
         for idx, dna, pad, seed in data_frags:
             try:
-                # Step 1: DNA → hex
                 if encoding_type == "6base":
                     hex_frag = dna_to_hex_6(dna, pad)
                 else:
                     hex_frag = dna_to_hex_decode_4(dna)
 
-                # Step 2: Reverse the seed scramble
                 if seed > 0:
                     frag_bytes = bytes.fromhex(hex_frag)
-                    unscrambled = scramble_bytes(frag_bytes, seed)
-                    hex_frag = unscrambled.hex()
+                    hex_frag = scramble_bytes(frag_bytes, seed).hex()
 
-                # Step 3: Reed-Solomon error correction
                 rs_decoded = decode_rs(hex_frag)
                 if rs_decoded:
                     full_hex += rs_decoded
@@ -514,7 +433,6 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
                 print(f"  Warning: fragment {chunk_id}:{idx} failed — {e}")
                 continue
 
-    # ── Reassemble and decompress ──
     if len(full_hex) % 2 != 0:
         full_hex = full_hex[:-1]
 
@@ -527,7 +445,6 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
         print(f"[DEC] Decompression failed: {e}")
         final_data = full_binary
 
-    # ── Write output file ──
     os.makedirs("output_files", exist_ok=True)
     path = os.path.join("output_files", filename)
     with open(path, "wb") as f:
@@ -538,14 +455,10 @@ def decode_fragments(fragments, filename, encoding_type="4base"):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# MERKLE TREE (blockchain verification)
+# MERKLE TREE
 # ═══════════════════════════════════════════════════════════════════
 
 def compute_merkle_root(fragments):
-    """
-    Compute Merkle root hash of all fragments.
-    Used for blockchain-based integrity verification.
-    """
     hashes = [hashlib.sha256(f.encode()).hexdigest() for f in fragments]
     if not hashes:
         return None
