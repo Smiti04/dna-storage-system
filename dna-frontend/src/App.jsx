@@ -11,22 +11,26 @@ import ViewFiles from "./pages/viewfiles";
 import SequenceViewer from "./pages/sequenceviewer";
 import ChangePassword from "./pages/changepassword";
 import BackendLoader from "./components/BackendLoader";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
   return (
     <BackendLoader>
       <BrowserRouter>
         <Routes>
+          {/* Public routes */}
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot" element={<ForgotPassword />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/upload" element={<Upload />} />
-          <Route path="/retrieve" element={<Retrieve />} />
-          <Route path="/files" element={<ViewFiles />} />
-          <Route path="/change-password" element={<ChangePassword />} />
-          <Route path="/sequence" element={<SequenceViewer />} />
+
+          {/* Protected routes — require JWT */}
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
+          <Route path="/retrieve" element={<ProtectedRoute><Retrieve /></ProtectedRoute>} />
+          <Route path="/files" element={<ProtectedRoute><ViewFiles /></ProtectedRoute>} />
+          <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
+          <Route path="/sequence" element={<ProtectedRoute><SequenceViewer /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </BackendLoader>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import { getSequence } from "../services/api";
+import { downloadFasta, downloadLabCSV } from "../utils/fastaExport";
 
 const FP = "ACGTACGTAC", RP = "TGCATGCATG";
 
@@ -14,10 +15,11 @@ const parse = (raw, idx) => {
     const parts = meta.split(":");
     const chunkId = parseInt(parts[0]);
     const fragIndex = parseInt(parts[1]);
+    const seed = parts[2] ? parseInt(parts[2]) : 0;
     const core = dna.startsWith(FP) && dna.endsWith(RP)
       ? dna.slice(FP.length, dna.length - RP.length)
       : dna;
-    return { raw, idx, chunkId, fragIndex, fp: FP, core, rp: RP, full: dna, length: dna.length };
+    return { raw, idx, chunkId, fragIndex, seed, fp: FP, core, rp: RP, full: dna, length: dna.length };
   } catch { return null; }
 };
 
@@ -39,6 +41,7 @@ function SequenceViewer() {
   const [view, setView] = useState("full");
   const [frags, setFrags] = useState([]); const [full, setFull] = useState(""); const [total, setTotal] = useState(0);
   const [search, setSearch] = useState(""); const [exp, setExp] = useState(null);
+  const [rawFragments, setRawFragments] = useState([]);
 
   const fetch_ = async () => {
     setStatus("loading");
@@ -46,6 +49,7 @@ function SequenceViewer() {
       const r = await getSequence(fileId);
       const p = r.data.fragments.map((f, i) => parse(f, i)).filter(Boolean);
       setFrags(p);
+      setRawFragments(r.data.fragments);
       setTotal(r.data.total_fragments);
       setFull(p.map(f => f.full).join(""));
       setStatus("done");
@@ -56,6 +60,8 @@ function SequenceViewer() {
 
   const btn = (c) => ({ padding: "7px 14px", background: c, border: "none", borderRadius: "5px", color: "#fff", fontWeight: "700", cursor: "pointer", fontSize: "12px" });
   const obtn = (a) => ({ padding: "7px 14px", background: a ? "#a29bfe" : "transparent", border: `1px solid ${a ? "#a29bfe" : "#2a2440"}`, borderRadius: "5px", color: a ? "#0a0912" : "#9a8fc0", cursor: "pointer", fontSize: "13px", fontWeight: "600" });
+
+  const labBtn = (color) => ({ padding: "8px 16px", background: "transparent", border: `1.5px solid ${color}`, borderRadius: "6px", color: color, fontWeight: "700", cursor: "pointer", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", transition: "all 0.15s" });
 
   return (
     <div className="page-layout"><Sidebar />
@@ -70,12 +76,42 @@ function SequenceViewer() {
 
         {status === "done" && <>
           <div style={{ display: "flex", gap: "10px", marginBottom: "18px", flexWrap: "wrap" }}>
-            {[["Total Fragments", total, "#a29bfe"], ["Total DNA Bases", full.length.toLocaleString(), "#48dbfb"], ["Encoding", "2-BIT", "#f0932b"], ["Error Correction", "Reed-Solomon", "#c4b5fd"]].map(([l, v, c]) => (
+            {[["Total Oligos", total, "#a29bfe"], ["Total DNA Bases", full.length.toLocaleString(), "#48dbfb"], ["Avg Length", Math.round(full.length / Math.max(total, 1)) + " bp", "#f0932b"], ["Error Correction", "Reed-Solomon", "#c4b5fd"]].map(([l, v, c]) => (
               <div key={l} className="card" style={{ textAlign: "center", padding: "10px 16px", flex: 1, minWidth: "130px" }}>
                 <div style={{ fontSize: "11px", color: "#9a8fc0", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: "700" }}>{l}</div>
                 <div style={{ fontSize: "18px", fontWeight: "700", color: c, marginTop: "4px" }}>{v}</div>
               </div>
             ))}
+          </div>
+
+          {/* Lab Submission Export Panel */}
+          <div className="card" style={{ marginBottom: "18px", border: "1px solid rgba(34,197,94,0.3)", background: "linear-gradient(135deg, #0a1a12 0%, #12101e 100%)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px" }}>
+              <div>
+                <div style={{ fontSize: "14px", fontWeight: "700", color: "#22c55e", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+                  🧬 Lab Submission Export
+                </div>
+                <div style={{ fontSize: "12px", color: "#9a8fc0", fontWeight: "500" }}>
+                  Download in formats accepted by Twist Bioscience, IDT, GenScript
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  style={labBtn("#22c55e")}
+                  onClick={() => downloadFasta(rawFragments, fileId, filename)}
+                  onMouseOver={e => { e.currentTarget.style.background = "#22c55e"; e.currentTarget.style.color = "#fff"; }}
+                  onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#22c55e"; }}>
+                  ↓ FASTA (all oligos)
+                </button>
+                <button
+                  style={labBtn("#48dbfb")}
+                  onClick={() => downloadLabCSV(rawFragments, fileId, filename)}
+                  onMouseOver={e => { e.currentTarget.style.background = "#48dbfb"; e.currentTarget.style.color = "#fff"; }}
+                  onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#48dbfb"; }}>
+                  ↓ Lab CSV
+                </button>
+              </div>
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: "8px", marginBottom: "18px" }}>
@@ -97,23 +133,23 @@ function SequenceViewer() {
 
           {view === "fragments" && <div className="card">
             <div style={{ display: "flex", gap: "10px", marginBottom: "12px", fontSize: "12px", alignItems: "center", fontWeight: "600" }}>
-              <span style={{ padding: "2px 8px", borderRadius: "4px", background: "#1a1210", color: "#f0932b" }}>Forward</span>
-              <span style={{ padding: "2px 8px", borderRadius: "4px", background: "#0a1a12", color: "#22c55e" }}>Core</span>
-              <span style={{ padding: "2px 8px", borderRadius: "4px", background: "#1a0a0a", color: "#ef4444" }}>Reverse</span>
+              <span style={{ padding: "2px 8px", borderRadius: "4px", background: "#1a1210", color: "#f0932b" }}>Forward Primer</span>
+              <span style={{ padding: "2px 8px", borderRadius: "4px", background: "#0a1a12", color: "#22c55e" }}>Core DNA</span>
+              <span style={{ padding: "2px 8px", borderRadius: "4px", background: "#1a0a0a", color: "#ef4444" }}>Reverse Primer</span>
             </div>
             <div style={{ marginBottom: "12px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
               <input style={{ padding: "7px 10px", background: "#0e0c18", border: "1px solid #2a2440", borderRadius: "5px", color: "#f0ecf8", fontSize: "13px", width: "240px", fontWeight: "500" }} placeholder="Search chunk, index, sequence..." value={search} onChange={e => setSearch(e.target.value)} />
               <span style={{ fontSize: "12px", color: "#9a8fc0", fontWeight: "600" }}>{filtered.length} / {total}</span>
-              <button style={btn("#48dbfb")} onClick={() => dl(frags.map(f => f.raw).join("\n"), `${filename || fileId}_all.txt`)}>Download All</button>
             </div>
             <div style={{ maxHeight: "480px", overflowY: "auto" }}>
               {filtered.map(f => (
                 <div key={f.idx} onClick={() => setExp(exp === f.idx ? null : f.idx)}
                   style={{ background: exp === f.idx ? "#16132a" : "#12101e", border: `1px solid ${exp === f.idx ? "#a29bfe33" : "#2a2440"}`, borderRadius: "6px", padding: "10px 14px", marginBottom: "5px", cursor: "pointer", transition: "all 0.15s" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                       <span style={{ padding: "2px 6px", borderRadius: "4px", fontSize: "11px", background: "#1a1528", color: "#c4b5fd", fontWeight: "600" }}>Chunk {f.chunkId}</span>
                       <span style={{ padding: "2px 6px", borderRadius: "4px", fontSize: "11px", background: "#0c1a22", color: "#48dbfb", fontWeight: "600" }}>Index {f.fragIndex}</span>
+                      {f.seed > 0 && <span style={{ padding: "2px 6px", borderRadius: "4px", fontSize: "11px", background: "#1a1210", color: "#f0932b", fontWeight: "600" }}>Seed {f.seed}</span>}
                       <span style={{ fontSize: "12px", color: "#9a8fc0", fontWeight: "500" }}>{f.length} bases</span>
                     </div>
                     <span style={{ fontSize: "10px", color: "#6b5f8a" }}>{exp === f.idx ? "▲" : "▼"}</span>
@@ -121,10 +157,10 @@ function SequenceViewer() {
                   {exp !== f.idx && <div style={{ marginTop: "5px", fontSize: "12px", color: "#6b5f8a", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", fontFamily: "var(--font-mono)", fontWeight: "500" }}>{f.full.slice(0, 70)}...</div>}
                   {exp === f.idx && <div style={{ marginTop: "10px" }}>
                     <div style={{ marginBottom: "8px" }}><ColoredDNA forward={f.fp} core={f.core} reverse={f.rp} /></div>
-                    <div style={{ display: "flex", gap: "6px" }}>
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                       <button style={btn("#48dbfb")} onClick={e => { e.stopPropagation(); copy(f.full); }}>Copy</button>
                       <button style={btn("#a29bfe")} onClick={e => { e.stopPropagation(); copy(f.core); }}>Core</button>
-                      <button style={btn("#22c55e")} onClick={e => { e.stopPropagation(); dl(`>c${f.chunkId}_f${f.fragIndex}\n${f.full}`, `c${f.chunkId}_f${f.fragIndex}.fasta`); }}>.fasta</button>
+                      <button style={btn("#22c55e")} onClick={e => { e.stopPropagation(); dl(`>dna_vault_c${f.chunkId}_i${f.fragIndex}\n${f.full}`, `c${f.chunkId}_i${f.fragIndex}.fasta`); }}>.fasta</button>
                     </div>
                   </div>}
                 </div>
