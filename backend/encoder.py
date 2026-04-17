@@ -7,18 +7,18 @@ ENCODING PIPELINE (file → DNA):
   2. HASH      — SHA-256 hash for integrity verification
   3. COMPRESS  — zlib level 1 (fast, good ratio)
   4. HEX       — Convert compressed bytes to hex string
-  5. FRAGMENT  — Split hex into small chunks (150 hex chars → ~150 DNA bases)
-                 Real synthesis oligos are 150-300 bases — we match this.
+  5. FRAGMENT  — Split hex into small chunks (50 hex chars → ~54 DNA bases)
+                 Real synthesis oligos are 50-300 bases — we match this.
   6. XOR       — Create XOR parity fragment for redundancy
-  7. RS ENCODE — Reed-Solomon error correction (10 symbols) per fragment
+  7. RS ENCODE — Reed-Solomon error correction (2 symbols) per fragment
   8. DNA ENCODE (constraint-aware, DNA Fountain approach):
      a. Convert hex fragment to raw bytes
      b. XOR bytes with a PRNG stream seeded by 'seed=0'
      c. Convert scrambled hex → DNA bases (4-base or 6-base map)
      d. CHECK all constraints (GC 35-65%, homopolymer ≤3, no restriction sites)
      e. If PASS → accept, store seed in metadata
-     f. If FAIL → increment seed, go back to (b), retry up to 200 seeds
-     g. With ~150-base oligos, a passing seed is found within 1-20 tries
+     f. If FAIL → increment seed, go back to (b), retry up to 500 seeds
+     g. With ~54-base oligos, a passing seed is found within 1-5 tries
   9. PRIMERS   — Add forward + reverse primers for PCR amplification
   10. STORE    — Save as "chunk_id:index:seed[:pad]|PRIMER+DNA+PRIMER"
 
@@ -33,11 +33,11 @@ DECODING PIPELINE (DNA → file):
   8. WRITE     — Save reconstructed file
 
 WHY SMALL FRAGMENTS MATTER:
-  - Real DNA synthesis produces oligos of 150-300 bases
-  - The seed-retry approach works because with ~150 bases,
+  - Real DNA synthesis produces oligos of 50-300 bases
+  - The seed-retry approach works because with ~54 bases,
     the probability of all constraints passing is high
-  - With 10,000+ base fragments, no random seed can avoid
-    all homopolymer runs — it's statistically impossible
+  - With 300+ base fragments, random seeds struggle to avoid
+    all homopolymer runs — statistically much harder
   - Smaller fragments = more fragments, but each one is
     individually valid and can be synthesized independently
 """
@@ -49,9 +49,9 @@ import random
 import reedsolo
 
 # =========================
-# REED SOLOMON (reduced to 4 for speed with small fragments)
+# REED SOLOMON (2 symbols — corrects 1 error per fragment)
 # =========================
-rs = reedsolo.RSCodec(4)
+rs = reedsolo.RSCodec(2)
 
 # =========================
 # PRIMERS (for PCR amplification)
@@ -215,13 +215,13 @@ def scramble_bytes(data_bytes, seed):
 # CONSTRAINT-AWARE FRAGMENT ENCODING
 # ═══════════════════════════════════════════════════════════════════
 
-MAX_SEEDS = 200
+MAX_SEEDS = 500
 
 def encode_fragment(hex_frag, encoding_type="4base"):
     """
     Encode hex → DNA that passes ALL constraints.
     Tries up to MAX_SEEDS different scrambles.
-    With ~150-base fragments, usually finds a valid seed in 1-20 tries.
+    With ~54-base fragments, usually finds a valid seed in 1-5 tries.
     """
     frag_bytes = bytes.fromhex(hex_frag)
 
@@ -277,11 +277,11 @@ def encode_file(file_path, encoding_type="4base"):
     hex_data = compressed.hex()
     print(f"[4/8] HEX: {len(hex_data):,} hex characters")
 
-    # ── Fragment size: 150 hex chars ──
-    # 150 hex = 75 bytes data → after RS(4) = 79 bytes = 158 hex
-    # 158 hex → 158 DNA bases (4-base) → + 20 primer bases = 178 total
-    # This is within the 150-300 base range that synthesis labs accept
-    fragment_size = 150
+    # ── Fragment size: 50 hex chars ──
+    # 50 hex = 25 bytes data → after RS(2) = 27 bytes = 54 hex
+    # 54 hex → 54 DNA bases (4-base) → + 20 primer bases = 74 total
+    # Short enough for seed retry to reliably find passing sequences
+    fragment_size = 50
     fragments = [hex_data[i:i + fragment_size] for i in range(0, len(hex_data), fragment_size)]
     print(f"[5/8] FRAGMENT: {len(fragments)} fragments x {fragment_size} hex chars")
 
