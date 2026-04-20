@@ -102,6 +102,13 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 MAX_FILE_SIZE = 1024 * 1024 * 1024
 init()
 
+# Auto-run migration on startup (safe — uses CREATE TABLE IF NOT EXISTS)
+try:
+    import migrate_db
+    migrate_db.migrate()
+except Exception as e:
+    print(f"[startup] migration warning: {e}")
+
 OUTPUT_FOLDER    = "output_files"
 KEY_FOLDER       = "key_files"
 TOKEN_FOLDER     = "token_files"
