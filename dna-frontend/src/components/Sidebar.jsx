@@ -1,10 +1,12 @@
 import { useNavigate, useLocation } from "react-router-dom";
 
 const links = [
-  { path: "/dashboard", label: "Dashboard", icon: "⬡" },
-  { path: "/upload",    label: "Upload",    icon: "↑" },
-  { path: "/files",     label: "My Files",  icon: "◈" },
-  { path: "/retrieve",  label: "Retrieve",  icon: "↓" },
+  { path: "/dashboard",       label: "Dashboard",       icon: "⬡" },
+  { path: "/upload",          label: "Upload",          icon: "↑" },
+  { path: "/files",           label: "My Files",        icon: "◈" },
+  { path: "/retrieve",        label: "Retrieve",        icon: "↓" },
+  { path: "/search",          label: "Search",          icon: "⌕" },
+  { path: "/vault",           label: "Key Vault",       icon: "⛉" },
   { path: "/change-password", label: "Change Password", icon: "⚿" },
 ];
 
@@ -39,20 +41,6 @@ function Sidebar() {
           );
         })}
       </nav>
-      /*
-  <NavLink to="/search" className={({ isActive }) =>
-    `sidebar-link ${isActive ? "active" : ""}`
-  }>
-    🔍 Search
-  </NavLink>
-
-  <NavLink to="/vault" className={({ isActive }) =>
-    `sidebar-link ${isActive ? "active" : ""}`
-  }>
-    🔐 Key Vault
-  </NavLink>
-*/
-
 
       <div style={{ padding: "12px 8px", borderTop: "1px solid #2a2440" }}>
         <button onClick={handleLogout}
