@@ -1,8 +1,5 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
-import Search from "./pages/Search";
-import KeyVault from "./pages/KeyVault";
-
 import Landing from "./pages/landing";
 import Login from "./pages/login";
 import Register from "./pages/register";
@@ -13,6 +10,8 @@ import Retrieve from "./pages/retrieve";
 import ViewFiles from "./pages/viewfiles";
 import SequenceViewer from "./pages/sequenceviewer";
 import ChangePassword from "./pages/changepassword";
+import Search from "./pages/Search";
+import KeyVault from "./pages/KeyVault";
 import BackendLoader from "./components/BackendLoader";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -33,25 +32,9 @@ function App() {
           <Route path="/retrieve" element={<ProtectedRoute><Retrieve /></ProtectedRoute>} />
           <Route path="/files" element={<ProtectedRoute><ViewFiles /></ProtectedRoute>} />
           <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
-          <Route path="/sequence" element={<ProtectedRoute><SequenceViewer /></ProtectedRoute>}
-            
-    path="/search"
-    element={
-      <ProtectedRoute>
-        <Search />
-      </ProtectedRoute>
-    }
-  />
-
-  <Route
-    path="/vault"
-    element={
-      <ProtectedRoute>
-        <KeyVault />
-      </ProtectedRoute>
-    }
-  />
-*/ /
+          <Route path="/sequence" element={<ProtectedRoute><SequenceViewer /></ProtectedRoute>} />
+          <Route path="/search" element={<ProtectedRoute><Search /></ProtectedRoute>} />
+          <Route path="/vault" element={<ProtectedRoute><KeyVault /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </BackendLoader>
