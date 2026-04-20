@@ -1,9 +1,16 @@
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
-import { uploadFile, analyzeConstraints, getJobStatus, extractError } from "../services/api";
+import {
+  uploadFile,
+  analyzeConstraints,
+  getJobStatus,
+  extractError,
+  vaultSave,
+} from "../services/api";
 import DNAConstraintsPanel from "../components/DNAConstraintsPanel";
 import { downloadConstraintsReport } from "../utils/downloadReport";
+import { encryptKey } from "../utils/vaultCrypto";
 
 function Upload() {
   const nav = useNavigate();
@@ -16,8 +23,51 @@ function Upload() {
   const [cData, setCData] = useState(null);
   const [azing, setAzing] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  // NEW — tags + vault state
+  const [tagInput, setTagInput] = useState("");
+  const [tags, setTags] = useState([]);
+  const [saveToVault, setSaveToVault] = useState(false);
+  const [vaultPassword, setVaultPassword] = useState("");
+
   const ref = useRef();
   const addLog = (m) => setLog((p) => [...p, m]);
+
+  const addTag = () => {
+    const t = tagInput.trim().toLowerCase();
+    if (t && !tags.includes(t) && tags.length < 10) {
+      setTags([...tags, t]);
+      setTagInput("");
+    }
+  };
+
+  const removeTag = (t) => setTags(tags.filter((x) => x !== t));
+
+  const handleTagKey = (e) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addTag();
+    }
+  };
+
+  // Save the returned retrieval key to the encrypted vault (if user opted in)
+  const saveKeyToVault = async (retrieval_key, file_id, filename) => {
+    if (!saveToVault) return;
+    if (!vaultPassword) {
+      addLog("⚠ Vault skipped — no password entered");
+      return;
+    }
+    try {
+      const payload = await encryptKey(retrieval_key, vaultPassword);
+      await vaultSave({ filename, file_id, ...payload });
+      addLog("✓ Retrieval key saved to encrypted vault");
+    } catch (e) {
+      addLog("⚠ Could not save to vault — keep the downloaded key file safe");
+      console.error(e);
+    } finally {
+      setVaultPassword(""); // scrub password from memory
+    }
+  };
 
   const pollJob = async (jobId) => {
     let attempts = 0;
@@ -38,40 +88,118 @@ function Upload() {
           addLog("Blockchain stored...");
           addLog("✓ Upload complete");
           setResult(r); setStatus("done"); setProgress(100);
-          const kc = [`FILE ID: ${r.file_id}`, `RETRIEVAL KEY: ${r.retrieval_key}`, `MERKLE ROOT: ${r.merkle_root}`, `ENCODING: ${r.encoding_type}`].join("\n");
-          const b = new Blob([kc], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `${file.name}_key.txt`; a.click(); URL.revokeObjectURL(u);
-          addLog("Analyzing constraints..."); setAzing(true);
-          try { const x = await analyzeConstraints(r.file_id); setCData(x.data); addLog("✓ Analysis complete"); } catch { addLog("⚠ Analysis failed"); }
-          setAzing(false); return;
+
+          const kc = [
+            `FILE ID: ${r.file_id}`,
+            `RETRIEVAL KEY: ${r.retrieval_key}`,
+            `MERKLE ROOT: ${r.merkle_root}`,
+            `ENCODING: ${r.encoding_type}`,
+          ].join("\n");
+          const b = new Blob([kc], { type: "text/plain" });
+          const u = URL.createObjectURL(b);
+          const a = document.createElement("a");
+          a.href = u;
+          a.download = `${file.name}_key.txt`;
+          a.click();
+          URL.revokeObjectURL(u);
+
+          // NEW — save to vault if opted in
+          await saveKeyToVault(r.retrieval_key, r.file_id, file.name);
+
+          addLog("Analyzing constraints...");
+          setAzing(true);
+          try {
+            const x = await analyzeConstraints(r.file_id);
+            setCData(x.data);
+            addLog("✓ Analysis complete");
+          } catch {
+            addLog("⚠ Analysis failed");
+          }
+          setAzing(false);
+          return;
         }
-        if (job.status === "failed") { addLog(`✗ ${job.error || "Encoding failed"}`); setStatus("error"); return; }
+        if (job.status === "failed") {
+          addLog(`✗ ${job.error || "Encoding failed"}`);
+          setStatus("error");
+          return;
+        }
       } catch { }
     }
-    addLog("✗ Encoding timed out"); setStatus("error");
+    addLog("✗ Encoding timed out");
+    setStatus("error");
   };
 
   const doUp = async () => {
     if (!file) return;
-    setStatus("uploading"); setLog([]); setCData(null); setResult(null); setProgress(0);
+    if (saveToVault && !vaultPassword) {
+      alert("Please enter your vault password or uncheck 'Save to vault'.");
+      return;
+    }
+    setStatus("uploading");
+    setLog([]);
+    setCData(null);
+    setResult(null);
+    setProgress(0);
+
     addLog(`Preparing: ${file.name}`);
     addLog(`Encoding: ${enc === "6base" ? "6-Base Epigenetic" : "4-Base Standard"}`);
+    if (tags.length) addLog(`Tags: ${tags.join(", ")}`);
     addLog("Uploading to server...");
+
     try {
-      const r = await uploadFile(file, enc, (m) => addLog(m));
+      const r = await uploadFile(file, enc, (m) => addLog(m), tags);
       if (r.data.async && r.data.job_id) {
-        addLog(`File received — encoding in background...`); addLog(`Job ID: ${r.data.job_id}`);
-        setStatus("encoding"); await pollJob(r.data.job_id); return;
+        addLog(`File received — encoding in background...`);
+        addLog(`Job ID: ${r.data.job_id}`);
+        setStatus("encoding");
+        await pollJob(r.data.job_id);
+        return;
       }
       if (r.data.success) {
-        addLog("Compressing..."); addLog("Reed-Solomon applied..."); addLog("DNA generated..."); addLog("Blockchain stored..."); addLog("✓ Upload complete");
-        setResult(r.data); setStatus("done"); setProgress(100);
-        const kc = [`FILE ID: ${r.data.file_id}`, `RETRIEVAL KEY: ${r.data.retrieval_key}`, `MERKLE ROOT: ${r.data.merkle_root}`, `ENCODING: ${r.data.encoding_type}`].join("\n");
-        const b = new Blob([kc], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `${file.name}_key.txt`; a.click(); URL.revokeObjectURL(u);
-        addLog("Analyzing constraints..."); setAzing(true);
-        try { const x = await analyzeConstraints(r.data.file_id); setCData(x.data); addLog("✓ Analysis complete"); } catch { addLog("⚠ Analysis failed"); }
+        addLog("Compressing...");
+        addLog("Reed-Solomon applied...");
+        addLog("DNA generated...");
+        addLog("Blockchain stored...");
+        addLog("✓ Upload complete");
+        setResult(r.data);
+        setStatus("done");
+        setProgress(100);
+
+        const kc = [
+          `FILE ID: ${r.data.file_id}`,
+          `RETRIEVAL KEY: ${r.data.retrieval_key}`,
+          `MERKLE ROOT: ${r.data.merkle_root}`,
+          `ENCODING: ${r.data.encoding_type}`,
+        ].join("\n");
+        const b = new Blob([kc], { type: "text/plain" });
+        const u = URL.createObjectURL(b);
+        const a = document.createElement("a");
+        a.href = u;
+        a.download = `${file.name}_key.txt`;
+        a.click();
+        URL.revokeObjectURL(u);
+
+        // NEW — save to vault if opted in
+        await saveKeyToVault(r.data.retrieval_key, r.data.file_id, file.name);
+
+        addLog("Analyzing constraints...");
+        setAzing(true);
+        try {
+          const x = await analyzeConstraints(r.data.file_id);
+          setCData(x.data);
+          addLog("✓ Analysis complete");
+        } catch {
+          addLog("⚠ Analysis failed");
+        }
         setAzing(false);
-      } else { addLog(`✗ ${r.data.error}`); setStatus("error"); }
-    } catch (e) { addLog(`✗ ${extractError(e, "Upload failed")}`); setStatus("error"); }
+      } else {
+        addLog(`✗ ${r.data.error}`);
+        setStatus("error");
+      }
+    } catch (e) {
+      addLog(`✗ ${extractError(e, "Upload failed")}`);
+      setStatus("error");
+    }
   };
 
   const encs = [
@@ -79,6 +207,20 @@ function Upload() {
     { id: "6base", label: "6-Base Epigenetic", bases: "A · T · G · C · 5mC · 6mA", badge: "Future-ready", color: "#f0932b", desc: "Epigenetic +29% density. Nanopore only.", density: "2.58 bits/base", compat: "Nanopore only" },
   ];
   const sl = { fontSize: "12px", fontWeight: "700", color: "#9a8fc0", letterSpacing: "1px", textTransform: "uppercase", marginBottom: "10px" };
+
+  // Small inline styles for the new tag chips
+  const chipStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 10px",
+    borderRadius: "12px",
+    background: "rgba(240, 147, 43, 0.15)",
+    border: "1px solid rgba(240, 147, 43, 0.4)",
+    color: "#f0932b",
+    fontSize: "12px",
+    fontWeight: 600,
+  };
 
   return (
     <div className="page-layout">
@@ -123,7 +265,108 @@ function Upload() {
           </div>
         )}
 
-        <div style={sl}>Step 3 — Encode & store</div>
+        {/* =========== NEW — Step 3: Tags =========== */}
+        <div style={sl}>Step 3 — Searchable tags (optional)</div>
+        <div style={{ marginBottom: "20px" }}>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+            <input
+              type="text"
+              placeholder="e.g. thesis, chapter-3, raw-data"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={handleTagKey}
+              style={{
+                flex: 1,
+                padding: "10px 12px",
+                background: "#12101e",
+                border: "1.5px solid #2a2440",
+                borderRadius: "6px",
+                color: "#f0ecf8",
+                fontSize: "13px",
+                fontFamily: "inherit",
+              }}
+            />
+            <button
+              type="button"
+              onClick={addTag}
+              style={{
+                padding: "10px 18px",
+                background: "transparent",
+                border: "1.5px solid #48dbfb44",
+                borderRadius: "6px",
+                color: "#48dbfb",
+                fontWeight: 600,
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
+              Add
+            </button>
+          </div>
+          <div style={{ fontSize: "11px", color: "#6b5f8a", marginBottom: "10px", fontWeight: 500 }}>
+            Press Enter or comma to add. Tags let you find this file later by keyword.
+          </div>
+          {tags.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+              {tags.map((t) => (
+                <span key={t} style={chipStyle}>
+                  {t}
+                  <button
+                    type="button"
+                    onClick={() => removeTag(t)}
+                    style={{ background: "none", border: "none", color: "#f0932b", cursor: "pointer", fontSize: "14px", lineHeight: 1, padding: 0 }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* =========== NEW — Step 4: Save to vault =========== */}
+        <div style={sl}>Step 4 — Key recovery (optional)</div>
+        <div className="card" style={{ marginBottom: "20px", padding: "16px" }}>
+          <label style={{ display: "flex", gap: "10px", alignItems: "start", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={saveToVault}
+              onChange={(e) => setSaveToVault(e.target.checked)}
+              style={{ marginTop: "3px", accentColor: "#a29bfe", width: "16px", height: "16px" }}
+            />
+            <span>
+              <span style={{ fontSize: "13px", fontWeight: 600, color: "#f0ecf8" }}>
+                Save retrieval key to my encrypted vault
+              </span>
+              <div style={{ fontSize: "12px", color: "#9a8fc0", marginTop: "4px", fontWeight: 500, lineHeight: 1.5 }}>
+                If you lose the downloaded key file, you can recover it from the vault using your password.
+                Encrypted in your browser with AES-256 — the server never sees the key.
+              </div>
+            </span>
+          </label>
+          {saveToVault && (
+            <input
+              type="password"
+              placeholder="Confirm your password to encrypt the key"
+              value={vaultPassword}
+              onChange={(e) => setVaultPassword(e.target.value)}
+              style={{
+                marginTop: "12px",
+                width: "100%",
+                padding: "10px 12px",
+                background: "#0a0912",
+                border: "1.5px solid #2a2440",
+                borderRadius: "6px",
+                color: "#f0ecf8",
+                fontSize: "13px",
+                fontFamily: "inherit",
+                boxSizing: "border-box",
+              }}
+            />
+          )}
+        </div>
+
+        <div style={sl}>Step 5 — Encode & store</div>
         <button className="btn-primary" onClick={doUp} disabled={!file || status === "uploading" || status === "encoding"} style={{ marginBottom: "20px" }}>
           {status === "uploading" ? "Uploading..." : status === "encoding" ? "Encoding..." : "Encode & Store"}
         </button>

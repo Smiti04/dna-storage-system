@@ -51,10 +51,17 @@ export const registerUser = async (data) => {
   catch (err) { throw { message: extractError(err, "Registration failed") }; }
 };
 
-export const uploadFile = (file, encodingType, onUploadProgress) => {
+/**
+ * uploadFile — now accepts an optional tags array that gets sent
+ * as a comma-separated string in the multipart form.
+ */
+export const uploadFile = (file, encodingType, onUploadProgress, tags = []) => {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("encoding_type", encodingType);
+  if (tags && tags.length) {
+    formData.append("tags", tags.join(","));
+  }
   return API.post("/upload", formData, {
     timeout: 600000,
     onUploadProgress: (progressEvent) => {
@@ -117,3 +124,29 @@ export const changePassword = (current_password, new_password) => {
   formData.append("new_password", new_password);
   return API.post("/change_password", formData);
 };
+
+/* =====================================================================
+   SEARCH ENDPOINTS
+   ===================================================================== */
+export const searchFiles = (query) =>
+  API.post("/search", { query });
+
+export const addTags = (file_id, filename, tags) =>
+  API.post("/tags/add", { file_id, filename, tags });
+
+export const getTags = (file_id) =>
+  API.get(`/tags/${file_id}`);
+
+/* =====================================================================
+   KEY VAULT ENDPOINTS (zero-knowledge encrypted storage)
+   The server never sees plaintext retrieval keys — the browser
+   encrypts with AES-GCM + PBKDF2 before calling vaultSave.
+   ===================================================================== */
+export const vaultSave = ({ filename, file_id, encrypted_key, iv, salt }) =>
+  API.post("/vault/save", { filename, file_id, encrypted_key, iv, salt });
+
+export const vaultList = () =>
+  API.get("/vault/list");
+
+export const vaultDelete = (id) =>
+  API.delete(`/vault/${id}`);

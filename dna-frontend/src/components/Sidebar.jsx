@@ -39,6 +39,20 @@ function Sidebar() {
           );
         })}
       </nav>
+      /*
+  <NavLink to="/search" className={({ isActive }) =>
+    `sidebar-link ${isActive ? "active" : ""}`
+  }>
+    🔍 Search
+  </NavLink>
+
+  <NavLink to="/vault" className={({ isActive }) =>
+    `sidebar-link ${isActive ? "active" : ""}`
+  }>
+    🔐 Key Vault
+  </NavLink>
+*/
+
 
       <div style={{ padding: "12px 8px", borderTop: "1px solid #2a2440" }}>
         <button onClick={handleLogout}

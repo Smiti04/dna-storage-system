@@ -5,6 +5,12 @@ import shutil
 import threading
 import time
 import uvicorn
+from pydantic import BaseModel
+from typing import List, Optional
+
+import search_service
+import vault_service
+
 
 from fastapi import Depends, HTTPException, FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -31,7 +37,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 jobs = {}
 
-def _run_encode_job(job_id, temp_path, encoding_type, user_id, original_filename):
+def _run_encode_job(job_id, temp_path, encoding_type, user_id, original_filename, tags=None):
     try:
         jobs[job_id]["status"] = "compressing"
         jobs[job_id]["progress"] = 10
@@ -54,6 +60,15 @@ def _run_encode_job(job_id, temp_path, encoding_type, user_id, original_filename
 
         add_block(file_id, file_hash)
         merkle_root = compute_merkle_root(fragments)
+
+        # ---- SEARCH INDEX HOOK ----
+        try:
+            search_service.index_file_fragments(user_id, file_id, fragments)
+            if tags:
+                search_service.add_tags(user_id, file_id, fname, tags)
+        except Exception as ix_err:
+            print(f"[search index] non-fatal error for {file_id}: {ix_err}")
+        # ----------------------------
 
         os.remove(temp_path)
 
@@ -96,6 +111,31 @@ FRAGMENTS_FOLDER = "fragments_storage"
 for folder in [OUTPUT_FOLDER, KEY_FOLDER, TOKEN_FOLDER, TEMP_FOLDER, FRAGMENTS_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
+
+# =============================================================
+# Pydantic models for the new search / vault endpoints
+# =============================================================
+class SearchRequest(BaseModel):
+    query: str
+
+
+class TagRequest(BaseModel):
+    file_id: str
+    filename: str
+    tags: List[str]
+
+
+class VaultSaveRequest(BaseModel):
+    filename: str
+    file_id: str
+    encrypted_key: str   # base64 AES-GCM ciphertext
+    iv: str              # base64 nonce
+    salt: str            # base64 PBKDF2 salt
+
+
+# =============================================================
+# Auth routes
+# =============================================================
 @app.post("/register")
 def register_api(username: str = Form(...), email: str = Form(...), password: str = Form(...)):
     success, msg = register_user(username, email, password)
@@ -112,11 +152,25 @@ def login_api(form_data: OAuth2PasswordRequestForm = Depends()):
     token = create_access_token({"sub": username})
     return {"access_token": token, "token_type": "bearer"}
 
+
+# =============================================================
+# Upload (with optional tags parameter for search indexing)
+# =============================================================
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), encoding_type: str = Form("4base"), current_user=Depends(get_current_user)):
+async def upload_file(
+    file: UploadFile = File(...),
+    encoding_type: str = Form("4base"),
+    tags: Optional[str] = Form(None),   # comma-separated list, e.g. "thesis,ch3,raw"
+    current_user=Depends(get_current_user),
+):
     try:
         if encoding_type not in ["4base", "6base"]:
             return {"success": False, "error": "Invalid encoding type"}
+
+        # parse tags
+        tag_list: List[str] = []
+        if tags:
+            tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
 
         temp_path = os.path.join(TEMP_FOLDER, file.filename)
         with open(temp_path, "wb") as buffer:
@@ -139,23 +193,39 @@ async def upload_file(file: UploadFile = File(...), encoding_type: str = Form("4
             save_fragments(file_id, fragments, frag_folder_path)
             add_block(file_id, file_hash)
             merkle_root = compute_merkle_root(fragments)
+
+            # ---- SEARCH INDEX HOOK (small files) ----
+            try:
+                search_service.index_file_fragments(user_id, file_id, fragments)
+                if tag_list:
+                    search_service.add_tags(user_id, file_id, fname, tag_list)
+            except Exception as ix_err:
+                print(f"[search index] non-fatal error for {file_id}: {ix_err}")
+            # -----------------------------------------
+
             os.remove(temp_path)
             return {
                 "success": True, "file_id": file_id, "retrieval_key": retrieval_key,
                 "merkle_root": merkle_root, "encoding_type": encoding_type
             }
 
+        # Async path for large files
         job_id = secrets.token_hex(8)
         user_id = current_user[0]
         jobs[job_id] = {
             "status": "queued", "progress": 0, "result": None, "error": None,
             "created_at": time.time(), "filename": file.filename, "size": size,
         }
-        thread = threading.Thread(target=_run_encode_job, args=(job_id, temp_path, encoding_type, user_id, file.filename), daemon=True)
+        thread = threading.Thread(
+            target=_run_encode_job,
+            args=(job_id, temp_path, encoding_type, user_id, file.filename, tag_list),
+            daemon=True,
+        )
         thread.start()
         return {"success": True, "async": True, "job_id": job_id, "message": f"Encoding started"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
 
 @app.get("/job_status/{job_id}")
 def job_status(job_id: str, current_user=Depends(get_current_user)):
@@ -168,6 +238,7 @@ def job_status(job_id: str, current_user=Depends(get_current_user)):
     elif job["status"] == "failed":
         response["error"] = job["error"]
     return response
+
 
 @app.post("/retrieve")
 def retrieve_file(file_id: str = Form(...), key: str = Form(...)):
@@ -191,9 +262,9 @@ def retrieve_file(file_id: str = Form(...), key: str = Form(...)):
     return FileResponse(path=file_path, media_type="application/octet-stream", filename=fname, headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
-# ===============================
+# =============================================================
 # VERIFY FILE (decode round-trip integrity test)
-# ===============================
+# =============================================================
 @app.post("/verify_file")
 def verify_file(file_id: str = Form(...), current_user=Depends(get_current_user)):
     """
@@ -286,18 +357,34 @@ def delete_file_api(file_id: str = Form(...), current_user=Depends(get_current_u
     if delete_file(file_id, user_id):
         if os.path.exists(frag_folder_path):
             shutil.rmtree(frag_folder_path)
+
+        # ---- SEARCH INDEX CLEANUP ----
+        try:
+            search_service.remove_file_from_index(user_id, file_id)
+        except Exception as ix_err:
+            print(f"[search index] cleanup error for {file_id}: {ix_err}")
+        # -------------------------------
+
         return {"message": "File deleted successfully"}
     return {"error": "File not found or unauthorized"}
+
 
 @app.delete("/delete_account")
 def delete_account_api(current_user=Depends(get_current_user)):
     user_id = current_user[0]
+    # Collect file ids first so we can clean up the search index
+    user_files_list = get_user_files(user_id)
     delete_user_account(user_id)
-    for fid, _, _ in get_user_files(user_id):
+    for fid, _, _ in user_files_list:
         frag_folder_path = os.path.join(FRAGMENTS_FOLDER, fid)
         if os.path.exists(frag_folder_path):
             shutil.rmtree(frag_folder_path)
+        try:
+            search_service.remove_file_from_index(user_id, fid)
+        except Exception:
+            pass
     return {"message": "Account deleted successfully"}
+
 
 @app.post("/forgot_password")
 def forgot_password_api(email: str = Form(...)):
@@ -386,6 +473,74 @@ def change_password_api(current_password: str = Form(...), new_password: str = F
     update_password(res[0], new_password)
     return {"message": "Password changed successfully"}
 
+
+# =============================================================
+#   SEARCH ENDPOINTS
+# =============================================================
+@app.post("/search")
+def unified_search(req: SearchRequest, current_user=Depends(get_current_user)):
+    """
+    Unified search. Auto-detects query type:
+      - 32-char hex string  -> retrieval key (hashes it and matches key_hash)
+      - >=12 ATGC bases     -> DNA substring search via k-mer index
+      - anything else       -> tag / filename keyword search
+    """
+    user_id = current_user[0]
+    results = search_service.search(user_id, req.query)
+    return results
+
+
+@app.post("/tags/add")
+def add_file_tags(req: TagRequest, current_user=Depends(get_current_user)):
+    user_id = current_user[0]
+    # Verify the file belongs to this user
+    meta = get_file_metadata(req.file_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="File not found")
+    search_service.add_tags(user_id, req.file_id, req.filename, req.tags)
+    return {"success": True, "tags_added": len(req.tags)}
+
+
+@app.get("/tags/{file_id}")
+def get_file_tags(file_id: str, current_user=Depends(get_current_user)):
+    user_id = current_user[0]
+    tags = search_service.list_tags(user_id, file_id)
+    return {"file_id": file_id, "tags": tags}
+
+
+# =============================================================
+#   KEY VAULT ENDPOINTS  (zero-knowledge storage)
+#   Server never sees plaintext keys. The browser encrypts
+#   with AES-GCM + PBKDF2 before sending.
+# =============================================================
+@app.post("/vault/save")
+def vault_save(req: VaultSaveRequest, current_user=Depends(get_current_user)):
+    user_id = current_user[0]
+    entry_id = vault_service.save_encrypted_key(
+        user_id=user_id,
+        filename=req.filename,
+        file_id=req.file_id,
+        encrypted_key=req.encrypted_key,
+        iv=req.iv,
+        salt=req.salt,
+    )
+    return {"success": True, "id": entry_id}
+
+
+@app.get("/vault/list")
+def vault_list(current_user=Depends(get_current_user)):
+    user_id = current_user[0]
+    return {"vault": vault_service.list_encrypted_keys(user_id)}
+
+
+@app.delete("/vault/{entry_id}")
+def vault_delete(entry_id: int, current_user=Depends(get_current_user)):
+    user_id = current_user[0]
+    ok = vault_service.delete_vault_entry(user_id, entry_id)
+    return {"success": ok}
+
+
+# =============================================================
 @app.get("/health")
 def health():
     return {"status": "ok"}
