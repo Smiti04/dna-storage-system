@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from auth import create_access_token, decode_token
 from database import *
 from encoder import encode_file, decode_fragments, compute_merkle_root
-from blockchain import add_block
+from blockchain import add_block, verify_chain, get_block_by_file_id
 from dna_constraints import analyze_constraints as run_analysis, analyze_fragments as run_fragment_analysis
 
 app = FastAPI(title="DNA Storage System")
@@ -58,8 +58,9 @@ def _run_encode_job(job_id, temp_path, encoding_type, user_id, original_filename
         os.makedirs(frag_folder_path, exist_ok=True)
         save_fragments(file_id, fragments, frag_folder_path)
 
-        add_block(file_id, file_hash)
+        # Compute Merkle root BEFORE adding to chain so it can be anchored.
         merkle_root = compute_merkle_root(fragments)
+        add_block(file_id, file_hash, merkle_root=merkle_root, user_id=user_id)
 
         # ---- SEARCH INDEX HOOK ----
         try:
@@ -198,8 +199,9 @@ async def upload_file(
             frag_folder_path = os.path.join(FRAGMENTS_FOLDER, file_id)
             os.makedirs(frag_folder_path, exist_ok=True)
             save_fragments(file_id, fragments, frag_folder_path)
-            add_block(file_id, file_hash)
+            # Compute Merkle root BEFORE adding to chain so it can be anchored.
             merkle_root = compute_merkle_root(fragments)
+            add_block(file_id, file_hash, merkle_root=merkle_root, user_id=user_id)
 
             # ---- SEARCH INDEX HOOK (small files) ----
             try:
@@ -545,6 +547,36 @@ def vault_delete(entry_id: int, current_user=Depends(get_current_user)):
     user_id = current_user[0]
     ok = vault_service.delete_vault_entry(user_id, entry_id)
     return {"success": ok}
+
+
+# =============================================================
+#   BLOCKCHAIN INTEGRITY ENDPOINTS
+# =============================================================
+@app.get("/blockchain/verify")
+def blockchain_verify_api():
+    """
+    Walk the entire blockchain and verify integrity.
+    Public endpoint — no auth required, since the chain itself is auditable.
+    Returns:
+      - valid: True if every block's stored hash matches a fresh recomputation
+               and every block links correctly to its predecessor.
+      - message: human-readable result or first failure description.
+    """
+    is_valid, message = verify_chain()
+    return {"valid": is_valid, "message": message}
+
+
+@app.get("/blockchain/block/{file_id}")
+def blockchain_get_block(file_id: str, current_user=Depends(get_current_user)):
+    """
+    Return the blockchain block committing to a given file_id.
+    Useful for retrieval-time integrity verification — a user can compare
+    the file_hash and merkle_root stored on-chain against their local copies.
+    """
+    block = get_block_by_file_id(file_id)
+    if not block:
+        raise HTTPException(status_code=404, detail="No block found for this file_id")
+    return block
 
 
 # =============================================================
